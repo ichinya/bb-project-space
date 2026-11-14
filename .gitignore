@@ -1,0 +1,9 @@
+dist/
+node_modules/
+.bb/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+project-spaces-install-smoke-*/
