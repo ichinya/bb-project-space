@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-project-spaces",
-  "version": "0.1.10",
+  "version": "0.1.19",
   "type": "module",
   "repository": {
     "type": "git",
@@ -18,7 +18,7 @@
     "name": "Project Spaces",
     "description": "Related BB projects, primary folders and shared agent context without per-chat history exports.",
     "branding": {
-      "icon": "Folders"
+      "icon": "Folder"
     },
     "server": "./server.ts",
     "host": "./host.ts",
@@ -30,13 +30,13 @@
     "test": "node --experimental-strip-types --test --test-isolation=none tests/*.test.ts"
   },
   "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
     "@radix-ui/react-checkbox": "^1.4.1",
     "@radix-ui/react-slot": "^1.5.0",
     "fflate": "^0.8.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.132",
     "@pierre/diffs": "~1.2.12",
     "@radix-ui/react-alert-dialog": "^1.2.1",
     "@radix-ui/react-context-menu": "^2.4.1",

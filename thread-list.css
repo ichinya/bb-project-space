@@ -54,6 +54,8 @@
 .pst-row[data-unread-tone=question] .pst-thread-title { color:color-mix(in oklab,var(--attention,#eab308) 65%,var(--sidebar-foreground,var(--foreground))); }
 .pst-row[data-unread-tone=error] .pst-thread-title { color:var(--destructive-text,var(--destructive)); }
 .pst-row[data-unread-tone=success] .pst-thread-title { color:var(--success-foreground,var(--success)); }
+.pst-row[data-attention-source=descendant][data-unread-tone=question] .pst-thread-title { color:color-mix(in oklab,var(--attention,#eab308) 85%,var(--sidebar-foreground,var(--foreground))); }
+.pst-row[data-attention-source=descendant] .pst-thread-title { font-weight:500; }
 .pst-row-metadata { display:flex; min-width:0; }
 .pst-row:has([data-thread-row-metadata][data-has-items]) { height:auto; min-height:44px; padding-top:5px; padding-bottom:5px; }
 .pst-row:has([data-thread-row-metadata][data-has-items]) .pst-thread-title { line-height:16px; }

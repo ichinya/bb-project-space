@@ -3,7 +3,7 @@
 A BB plugin for grouping existing projects, choosing the primary project for
 each chat, and providing shared instructions and an optional ai-workspace group.
 
-## Version 0.1.10
+## Version 0.1.19
 
 - Create, edit and remove spaces without moving or deleting source directories.
 - Put one BB project in several spaces. Choose the default project per space,
@@ -17,11 +17,38 @@ each chat, and providing shared instructions and an optional ai-workspace group.
 - Group the sidebar by space: common threads, then projects and their threads.
 - Preserve old unassigned chats under their original BB project. Chats with a
   space binding appear only there, even if the project belongs to several spaces.
+- Move a thread to another space or outside spaces through its native action
+  menu. Moves preserve IDs/history and include descendants; all their projects
+  must belong to the destination. Explicitly moved children retain native parent
+  links and appear at their destination. Space context applies on session restart.
+- Copy a thread with BB's native history fork, without starting an agent or
+  copying child threads. Copies reuse the original working environment/files.
+- Use the project's ellipsis button for move/copy of the current filtered list.
+  Archived threads are included only when loaded and shown. Partial batch
+  failures report results and retry only failed sources.
+- Prepare Repowise across all space folders from settings. Each checkout keeps
+  its native index; managed workspace manifests and cross-repo artifacts live
+  in plugin host data, shared between chats with the same checkout set.
+- Agents receive `project_spaces_repowise` for code and
+  `project_spaces_workspace` for ai-workspace materials. Unbound project threads
+  inherit a unique space; multiple memberships require an explicit choice.
+  Explicitly outside threads stay outside. Existing sessions need a restart.
+- Repowise `repo=all` uses native federated operations when supported and fans
+  other reads out with repo-labelled results. The active worktree replaces
+  only its project; other folders stay on the same selected host. New worktrees
+  prepare their own index rather than querying an unrelated base checkout.
+
 - Keep native thread menus, read/work indicators, pinned families, child threads,
   title search, archive filtering and paged archive loading.
-- Highlight unread titles: yellow for pending user input, red for failures and
-  green for completed work. Opening a thread uses BB's native read tracking and
-  restores the normal text color; new unread events highlight it again.
+- Preserve space/common versus project placement when using native Continue from,
+  forks and delegated children. Explicit transfers take precedence. Repair an old
+  unbound continuation with `bb project-spaces inherit <thread-id>`; inspect its
+  placement with `bb project-spaces thread-binding <thread-id>`. For an older
+  continuation already assigned the wrong scope, use `inherit <thread-id> --replace`.
+- Highlight pending questions and approvals in yellow until answered, including
+  opened/read threads. Unread failures are red and completed work is green;
+  opening the thread acknowledges those outcomes. Parent threads inherit their
+  descendants' attention even when expanded, with brighter yellow for pending input.
 - Show thread lists on each space's page and launch explicitly common or
   project-scoped chats. Version 0.1 bindings default to project-scoped.
 - Match the bundled Thread list's row height, typography, group spacing and
@@ -34,6 +61,32 @@ each chat, and providing shared instructions and an optional ai-workspace group.
   PRs show no link; no extra GitHub polling is added by this plugin.
 
 ## Current scope
+
+### Repowise integration
+
+Repowise must be available on the selected host's PATH. New indexes use
+`--mode fast --no-prose --no-save-key --no-editor-setup --no-hook --no-workspace`
+and exclude `.bb/`. Updates include uncommitted files via
+`--index-only --working-tree`. This initial mode provides code structure and
+essential Git facts, not a full generated wiki or guaranteed semantic embeddings.
+Indexes can be upgraded separately with native Repowise. No global MCP/editor
+configuration or model keys are changed. Git ownership exceptions are limited
+to the exact selected roots in the child process environment; global Git
+configuration is preserved.
+
+CLI setup and verification:
+
+```text
+bb project-spaces repowise-sync <space-id> <host-id> --json
+bb project-spaces repowise-status <space-id> <host-id> --json
+bb project-spaces repowise-query <space-id> <host-id> get_overview --json
+```
+
+Preparation runs in the background. Poll status until `busy=false` and
+`prepared=true`; failures remain visible. Agent calls `prepare` and `context`
+use the thread's actual environment, including a selected worktree. Inspect
+upstream staleness/confidence diagnostics and update indexes before relying on
+changed code. Neither index scope nor path maps grant filesystem permissions.
 
 ### ai-workspace integration
 

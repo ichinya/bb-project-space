@@ -3,6 +3,7 @@ import { workspaceHostContract } from './workspace-contract.ts';
 import { inspectWorkspace,synchronizeWorkspace } from './workspace-host.ts';
 import { workspaceMcp } from './workspace-process.ts';
 import { workspaceExecutable,inspectWorkspaceSoftware,installWorkspaceSoftware } from './workspace-software.ts';
+import { inspectRepowise,synchronizeRepowise,queryRepowise } from './repowise-host.ts';
 
 // Serialize workspace mutations in this host worker, including between spaces.
 let queue:Promise<unknown>=Promise.resolve();
@@ -10,6 +11,9 @@ function serial<T>(run:()=>Promise<T>):Promise<T>{const operation=queue.then(run
 export default experimental_defineHostEntry({
   contract:workspaceHostContract,
   handlers:{
+    repowise_inspect:async(input,ctx)=>inspectRepowise(input,ctx.experimental_paths.dataDir,{cwd:ctx.experimental_paths.dataDir,signal:ctx.signal}),
+    repowise_sync:async(input,ctx)=>synchronizeRepowise(input,ctx.experimental_paths.dataDir,{cwd:ctx.experimental_paths.dataDir,signal:ctx.signal}),
+    repowise_query:async(input,ctx)=>queryRepowise(input.workspace,input.query,ctx.experimental_paths.dataDir,{cwd:ctx.experimental_paths.dataDir,signal:ctx.signal}),
     software:async(input,ctx)=>{await queue;return inspectWorkspaceSoftware(ctx.experimental_paths.dataDir,input.checkLatest,{signal:ctx.signal});},
     install:async(_input,ctx)=>serial(()=>installWorkspaceSoftware(ctx.experimental_paths.dataDir,{signal:ctx.signal})),
     inspect:async(input,ctx)=>serial(async()=>inspectWorkspace(input,{cwd:ctx.experimental_paths.dataDir,signal:ctx.signal,binary:await workspaceExecutable(ctx.experimental_paths.dataDir)})),

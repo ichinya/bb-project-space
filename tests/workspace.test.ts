@@ -30,6 +30,14 @@ test('real CLI initializes, merges configs, scopes MCP, preserves other groups a
     const original=JSON.parse(await fs.readFile(path.join(a,'.ai-workspace.json'),'utf8'));
     const unsupported=JSON.stringify({...original,custom:{keep:true}});await fs.writeFile(path.join(a,'.ai-workspace.json'),unsupported);
     const rejected=await synchronizeWorkspace(request,data,options);assert.ok(rejected.results.some(r=>!r.ok&&r.path===a));assert.equal(await fs.readFile(path.join(a,'.ai-workspace.json'),'utf8'),unsupported);
+    for(const share of [['docs/*'],[{path:'docs/**',label:'Docs'}]]){
+      const invalid=JSON.stringify({...original,share});await fs.writeFile(path.join(a,'.ai-workspace.json'),invalid);
+      const checked=await inspectWorkspace(request,options),folder=checked.folders.find(f=>f.path===a)!;
+      assert.equal(folder.configExists,true);assert.match(folder.error!,/share.*docs\/\*/);
+      const failed=await synchronizeWorkspace(request,data,options);
+      assert.match(failed.results.find(r=>r.path===a)!.message,/только точные пути/);
+      assert.equal(await fs.readFile(path.join(a,'.ai-workspace.json'),'utf8'),invalid,'invalid config must not be changed before validation');
+    }
     await fs.writeFile(path.join(a,'.ai-workspace.json'),JSON.stringify(original));
     const result=await synchronizeWorkspace(request,data,options);
     assert.deepEqual(result.results.filter(r=>!r.ok),[],JSON.stringify(result.results));assert.equal(result.status.available,true);assert.equal(result.status.folders.length,2);
@@ -52,5 +60,7 @@ test('real CLI initializes, merges configs, scopes MCP, preserves other groups a
     const changed=await synchronizeWorkspace({...reduced,group:'new-group'},data,options);assert.ok(changed.results.every(r=>r.ok));
     const status=await inspectWorkspace({...reduced,group:'new-group'},options);assert.ok(status.folders[0]!.groups.includes('new-group'));
     assert.equal(await fs.readFile(path.join(a,'README.md'),'utf8'),'# Alpha\nShared context.');
-  }finally{await fs.rm(root,{recursive:true,force:true});}
+  // The native isolated owner exits five seconds after its last request; Windows
+  // keeps its cwd locked until then. Retry cleanup without touching other owners.
+  }finally{await fs.rm(root,{recursive:true,force:true,maxRetries:12,retryDelay:100});}
 });

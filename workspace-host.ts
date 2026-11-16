@@ -14,6 +14,15 @@ type Registered={path:string;name:string;groups:{name:string}[]};
 const key=(value:string)=>process.platform==='win32'?path.resolve(value.replace(/^\\\\\?\\/,'')).toLowerCase():path.resolve(value);
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 
+/** Native ai-workspace accepts literal shared paths, never glob patterns. */
+function validateSharedPaths(config:Config|null) {
+  if(!Array.isArray(config?.share))return;
+  for(const entry of config.share){
+    const sharedPath=typeof entry==='string'?entry:entry&&typeof entry==='object'?entry.path:null;
+    if(typeof sharedPath==='string'&&/[*?\[\]{}]/.test(sharedPath))throw new Error(`В .ai-workspace.json → share указан шаблон ${JSON.stringify(sharedPath)}. ai-workspace принимает только точные пути к файлам и папкам: например, "docs" вместо "docs/*". Исправьте конфиг и повторите инициализацию.`);
+  }
+}
+
 async function configAt(root:string):Promise<{file:string;config:Config|null;raw:string|null}> {
   const file=path.join(root,'.ai-workspace.json');
   try {
@@ -47,7 +56,7 @@ export async function inspectWorkspace(request:Request,options:WorkspaceOptions)
     const projects=await registered(options);
     const folders=await Promise.all(request.roots.map(async root=>{
       const result={...root,exists:false,initialized:false,groups:[] as string[],configPath:path.join(root.path,'.ai-workspace.json'),configExists:false,configGroups:[] as string[],error:null as string|null};
-      try {const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');result.exists=true;const project=projects.find(p=>key(p.path)===key(canonical));result.initialized=!!project;result.groups=project?.groups.map(g=>g.name)??[];const config=await configAt(canonical);result.configExists=!!config.config;result.configGroups=config.config?.groups??[];}catch(error){result.error=message(error);}return result;
+      try {const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');result.exists=true;const project=projects.find(p=>key(p.path)===key(canonical));result.initialized=!!project;result.groups=project?.groups.map(g=>g.name)??[];const config=await configAt(canonical);result.configExists=!!config.config;result.configGroups=config.config?.groups??[];validateSharedPaths(config.config);}catch(error){result.error=message(error);}return result;
     }));
     return {available:true,version,group:request.group,error:null,folders};
   }catch(error){return {available:false,version,group:request.group,error:message(error),folders:[]};}
@@ -66,6 +75,7 @@ export async function synchronizeWorkspace(request:Request,dataDir:string,option
       const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');desired.add(key(canonical));
       const existing=projects.find(p=>key(p.path)===key(canonical));
       const before=await configAt(canonical);
+      validateSharedPaths(before.config);
       let member=state.members.find(m=>key(m.path)===key(canonical)&&m.group===request.group);
       if(!member){member={path:canonical,group:request.group,owners:[],original:(existing?.groups??[]).some(g=>g.name===request.group)||(before.config?.groups??[]).includes(request.group)};state.members.push(member);}
       if(!member.owners.includes(request.spaceId))member.owners.push(request.spaceId);

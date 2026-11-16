@@ -1,7 +1,7 @@
 import type { Space } from './model.ts';
 
 export type ThreadScope = 'space' | 'project';
-export type ThreadBinding = { spaceId: string; scope: ThreadScope };
+export type ThreadBinding = { spaceId: string | null; scope: ThreadScope };
 export type GroupableThread = {
   id: string; projectId: string; parentThreadId: string | null;
   displayTitle: string; updatedAt: number; isPinned: boolean;
@@ -13,13 +13,13 @@ export type ThreadNode<T extends GroupableThread> = { thread: T; children: Threa
 export function readThreadBinding(metadata: unknown): ThreadBinding | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const value = metadata as Record<string, unknown>;
-  if (typeof value.spaceId !== 'string' || !value.spaceId) return null;
+  if (value.spaceId !== null && (typeof value.spaceId !== 'string' || !value.spaceId)) return null;
   if (value.threadScope !== undefined && value.threadScope !== 'space' && value.threadScope !== 'project') return null;
   return { spaceId: value.spaceId, scope: value.threadScope === 'space' ? 'space' : 'project' };
 }
 
-export function threadMetadata(space: Space, scope: ThreadScope, workspaceMap: string) {
-  return { spaceId: space.id, threadScope: scope, spaceSnapshot: space, workspaceMap };
+export function threadMetadata(space: Space, scope: ThreadScope, workspaceMap: string, bindingOrigin:'launch'|'transfer'='launch') {
+  return { spaceId: space.id, threadScope: scope, spaceSnapshot: space, workspaceMap, bindingOrigin };
 }
 
 /** Every visible thread appears once. Families follow their visible root; no BB data is moved. */
@@ -31,6 +31,14 @@ export function groupThreads<T extends GroupableThread>(
   const byId = new Map(visible.map(t => [t.id, t]));
   const roots = new Map<string, ThreadNode<T>>();
   const parentOf = new Map<string, string | null>();
+  const placement=(id:string):ThreadBinding|null=>{
+    const seen=new Set<string>();let current:string|null=id;
+    while(current&&!seen.has(current)){
+      seen.add(current);if(bindings[current])return bindings[current]!;
+      current=byId.get(current)?.parentThreadId??null;
+    }
+    return null;
+  };
   for (const thread of visible) {
     let parent = thread.parentThreadId;
     // Bad imported parent links must never make a thread disappear or recurse forever.
@@ -40,6 +48,9 @@ export function groupThreads<T extends GroupableThread>(
       if (seen.has(next)) { parent = null; break; }
       seen.add(next); next = byId.get(next)!.parentThreadId;
     }
+    // A moved child keeps its native parent relationship but appears in its own space.
+    const own=bindings[thread.id],inherited=parent?placement(parent):null;
+    if(own&&(own.spaceId!==(inherited?.spaceId??null)||own.scope!==(inherited?.scope??'project')))parent=null;
     parentOf.set(thread.id, parent && byId.has(parent) ? parent : null);
     roots.set(thread.id, { thread, children: [] });
   }

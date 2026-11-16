@@ -1,0 +1,5 @@
+import { z } from 'zod';
+export const repowiseRequest=z.object({spaceId:z.string().uuid(),name:z.string().min(1).max(100),roots:z.array(z.object({name:z.string().min(1).max(100),path:z.string().min(1).max(2048)})).min(1).max(80)});
+export const repowiseStatus=z.object({available:z.boolean(),version:z.string().nullable(),workspacePath:z.string().nullable(),prepared:z.boolean(),busy:z.boolean(),error:z.string().nullable(),updatedAt:z.number().nullable(),roots:z.array(z.object({name:z.string(),path:z.string(),alias:z.string(),exists:z.boolean(),indexed:z.boolean(),message:z.string()}))});
+export const repowiseReadTools=['get_answer','get_context','get_symbol','search_codebase','get_risk','get_change_risk','get_why','get_overview','get_health','get_dead_code','get_dependency_path','get_execution_flows','get_blast_radius','get_architecture','get_conformance'] as const;
+export const repowiseQuery=z.object({operation:z.enum(['context','list_tools','call']),tool:z.enum(repowiseReadTools).optional(),repo:z.string().min(1).max(150).default('all'),arguments:z.record(z.string(),z.unknown()).optional()});

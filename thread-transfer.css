@@ -1,0 +1,9 @@
+.pst-transfer-dialog { width:min(480px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; color:var(--foreground); background:var(--background); }
+.pst-transfer-dialog form { display:grid; gap:16px; }
+.pst-transfer-field { display:grid; gap:6px; font-size:13px; }
+.pst-transfer-dialog select { width:100%; border:1px solid var(--border); border-radius:6px; padding:8px; background:var(--background); color:var(--foreground); }
+.pst-transfer-dialog p { font-size:13px; line-height:1.5; color:var(--muted-foreground); white-space:pre-wrap; }
+.pst-transfer-dialog [role=alert] { color:var(--destructive-text,var(--destructive)); }
+.pst-transfer-buttons { display:flex; justify-content:flex-end; gap:8px; }
+.pst-transfer-buttons button { padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--secondary); color:var(--secondary-foreground); cursor:pointer; }
+.pst-transfer-buttons button:disabled { opacity:.5; cursor:default; }

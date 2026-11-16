@@ -28,6 +28,6 @@ test('agent integration binds the current space group to the actual environment 
     await assert.rejects(()=>harness.behavior.callRpc('workspace_sync',{id:space.id,hostId:'source-host',revision:0}),/Настройки изменились/);
     await harness.behavior.callRpc('remove',{id:space.id,revision:2});
     const removed=await harness.behavior.resolveAgentConfiguration(context);assert.equal(removed.tools.length,0);
-    await assert.rejects(()=>harness.behavior.callAgentTool('project_spaces_workspace',{operation:'context'},{threadId:'thread',projectId:'p'}),/Группа пространства недоступна/);
+    await assert.rejects(()=>harness.behavior.callAgentTool('project_spaces_workspace',{operation:'context'},{threadId:'thread',projectId:'p'}),/Пространство недоступно/);
   }finally{await harness.lifecycle.dispose();}
 });

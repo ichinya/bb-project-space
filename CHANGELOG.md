@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.1.19
+
+- Package the pinned Plugin SDK as a production dependency so Git/marketplace
+  installations can build the frontend RPC contracts with development dependencies omitted.
+- Add the approved marketplace overview and a monochrome folder-tree icon.
+- Keep native inline-composer buttons isolated from project-list button styles.
+
+## 0.1.18
+
+- Inherit missing Project Spaces placement for native Continue from, forks and
+  delegated child threads. Carry the shared/project scope and saved context
+  before dispatch; preserve explicit transfers, including outside placement.
+- Recognize only the leading structured Continue from link in the first user
+  turn. Ordinary mentions and later messages do not reassign a thread. Bound
+  ancestry lookups and publish binding updates for the live sidebar.
+- Add read-only thread-binding inspection and an inherit CLI repair command
+  for continuations created before this fix, without copying history or sending prompts.
+- Distinguish automatic launch defaults from explicit moves/copies so Continue
+  from can replace a seeded project scope while preserving deliberate transfers.
+  Support explicit --replace repair for older continuations with the wrong scope.
+
+## 0.1.17
+
+- Open project chat forms inline, immediately below the project's launch button.
+  Show Close beside that same button; keep a single active composer and native
+  draft keys when switching projects or reopening a form.
+- Keep common-space chats beneath the space heading with Close beside their
+  launch button. Scroll sidebar launches to the matching inline action row.
+
+## 0.1.16
+
+- Place the new-chat composer directly below the space heading, before the
+  thread/project lists. Keep the common-chat button beside space settings and
+  the close button beside the composer title.
+- Scroll to the composer for project/common launch actions and sidebar routes,
+  including repeated clicks for an already-open project. Preserve native draft keys.
+
+## 0.1.15
+
+- Make saving a visible first step, place the save action before integrations,
+  and keep settings open with the current revision after saving. Explain why
+  initialization/indexing is disabled while unsaved and that checks show saved folders.
+- Detect unsupported ai-workspace share globs during inspection and before
+  changing membership/configuration. Show the offending path and a Russian fix hint.
+
+## 0.1.14
+
+- Keep pending questions and approvals yellow after the thread is opened or
+  marked read, until the interaction is resolved. A pending interaction also
+  takes precedence over a running indicator.
+- Propagate attention through parent threads even when children are expanded.
+  Use a brighter yellow and stronger title weight for parents; pending input
+  takes priority over unread failures and completion.
+
+## 0.1.13
+
+- Add host-scoped Repowise setup, progress/status UI and read-only agent bridge.
+  Managed workspace manifests support arbitrary folder locations; native
+  indexes are reused per checkout instead of copied into chat storage.
+- Supply ai-workspace and Repowise tools to space threads and project threads
+  with a unique space. Require selection for multiple memberships and honor
+  explicit outside placement. Resolve both sources on the actual thread host.
+- Federate supported workspace queries and fan out other reads by repo alias.
+  Bound output, reject unlisted repositories/write tools, and preserve evidence
+  labels. Prepare worktree-specific scopes instead of substituting base indexes.
+- Add background indexing and CLI setup/status/query commands. Initial indexes
+  use fast, no-prose mode and skip editor/hook installation; updates include
+  uncommitted code. Preserve existing full indexes and user editor settings.
+
+## 0.1.12
+
+- Add native thread menu actions to move or copy chats into spaces or outside
+  spaces. Copies use BB's history fork without sending a prompt; environments
+  remain shared. Moves include descendants and retain IDs and native links.
+- Add project-level batch transfer dialogs for the current filtered/loaded
+  list, with destination membership validation, partial failure reporting and
+  retries that do not duplicate successful copies.
+- Respect explicit child placement in grouping and label the loose section
+  “Треды вне пространств”. Refresh bindings through realtime after transfers.
+
+## 0.1.11
+
+- Use BB's supported Folder icon for the sidebar entry and plugin branding,
+  replacing the unsupported Folders name that fell back to a lightning bolt.
+
 ## 0.1.10
 
 - Indent thread rows below their project/group headings by 24px, keeping
