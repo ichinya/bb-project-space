@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { gitRepository,type Repository } from './repository.ts';
+import { RepositoryIcon } from './repository-icon.tsx';
 import {
   useRpc, useRealtime, useSdk, useBbNavigate, ThreadTitle,
   experimental_useSidebarThreads as useSidebarThreads,
@@ -123,7 +125,7 @@ export function ThreadRows({nodes,activeThreadId,onNavigate,initialLimit=12}:{no
   return <div className="pst-rows">{nodes.slice(0,limit).map(node=><ThreadRow key={node.thread.id} node={node} activeThreadId={activeThreadId} onNavigate={onNavigate} attention={attention}/>)}{nodes.length>limit&&<button className="pst-more" onClick={()=>setLimit(limit+initialLimit)}>Ещё {Math.min(initialLimit,nodes.length-limit)} из {nodes.length-limit}</button>}</div>;
 }
 
-function Group({id,title,count,children,open=true,icon,onNew,onSettings,repositoryUrl,onTransfer}:{id:string;title:string;count?:number;children:ReactNode;open?:boolean;icon?:string;onNew?:()=>void;onSettings?:()=>void;repositoryUrl?:string|null;onTransfer?:()=>void}) {
+function Group({id,title,count,children,open=true,icon,onNew,onSettings,repository,onTransfer}:{id:string;title:string;count?:number;children:ReactNode;open?:boolean;icon?:string;onNew?:()=>void;onSettings?:()=>void;repository?:Repository|null;onTransfer?:()=>void}) {
   const navigate=useBbNavigate();
   const [expanded,setExpanded] = useState(()=>{try {const value=localStorage.getItem('project-spaces.group.'+id);return value===null?open:value==='open';}catch{return open;}});
   const toggle=()=>{setExpanded(!expanded);try{localStorage.setItem('project-spaces.group.'+id,expanded?'closed':'open');}catch{/* Storage may be unavailable in an embedded client. */}};
@@ -135,7 +137,7 @@ function Group({id,title,count,children,open=true,icon,onNew,onSettings,reposito
       </button>
       {count!==undefined&&count>0&&<small className="pst-count">{count}</small>}
       <span className="pst-heading-actions">
-        {repositoryUrl&&<a href={repositoryUrl} target="_blank" rel="noopener noreferrer" title={`GitHub: ${title}`} aria-label={`Репозиторий ${title} на GitHub`} onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&event.button===0&&navigate.openUrl(repositoryUrl))event.preventDefault();}}><Icon name="Github"/></a>}
+        {repository&&<a href={repository.url} target="_blank" rel="noopener noreferrer" title={`${repository.label}: ${title}`} aria-label={`Открыть репозиторий ${title} (${repository.label})`} onClick={event=>{if(!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&event.button===0&&navigate.openUrl(repository.url))event.preventDefault();}}><RepositoryIcon provider={repository.provider}/></a>}
         {onNew&&<button onClick={onNew} title={`Новый тред: ${title}`} aria-label={`Новый тред: ${title}`}><Icon name="MessageSquarePlus"/></button>}
         {onSettings&&<button onClick={onSettings} title={`Настройки: ${title}`} aria-label={`Настройки: ${title}`}><Icon name="Settings"/></button>}
         {onTransfer&&<button onClick={onTransfer} title={`Перенос и копирование тредов: ${title}`} aria-label={`Перенос и копирование тредов: ${title}`}><Icon name="MoreHorizontal"/></button>}
@@ -148,11 +150,11 @@ function Group({id,title,count,children,open=true,icon,onNew,onSettings,reposito
 export function SpaceThreadSidebar(props:PluginThreadListProps) {
   const rpc=useRpc<typeof rpcContract>(),navigate=useBbNavigate();
   const [spaces,setSpaces]=useState<Space[]>([]),[catalogReady,setCatalogReady]=useState(false),[catalogError,setCatalogError]=useState('');
-  const [repositories,setRepositories]=useState<Record<string,string|null>>({});
+  const [repositories,setRepositories]=useState<Record<string,Repository|null>>({});
   const [query,setQuery]=useState(''),[archived,setArchived]=useState(false);
   const [transferSelection,setTransferSelection]=useState<ProjectTransferSelection|null>(null);
-  const refresh=useCallback(()=>{rpc.call('catalog').then(result=>{setSpaces(result.spaces);setRepositories(Object.fromEntries(result.projects.map(p=>[p.id,p.githubUrl])));setCatalogReady(true);setCatalogError('');},cause=>setCatalogError(String(cause)));},[rpc]);
-  useEffect(refresh,[refresh]);useRealtime('spaces-changed',refresh);
+  const refresh=useCallback(()=>{rpc.call('catalog').then(result=>{setSpaces(result.spaces);setRepositories(Object.fromEntries(result.projects.map(p=>[p.id,p.repository??gitRepository(p.githubUrl)])));setCatalogReady(true);setCatalogError('');},cause=>setCatalogError(String(cause)));},[rpc]);
+  useEffect(refresh,[refresh]);useRealtime('spaces-changed',refresh);useRealtime('catalog-changed',refresh);
   const {state,grouped,ready,error,retry}=useGroupedThreads(spaces,archived,query);
   const openSpace=(space:Space,projectId?:string)=>{navigate.toPluginPanel('spaces',{subPath:space.id+(projectId?'/project/'+projectId:'/common')+'/'+Date.now()});props.onNavigate();};
   const rows=(nodes:ThreadNode<PluginSidebarThread>[])=><ThreadRows nodes={nodes} activeThreadId={props.activeThreadId} onNavigate={props.onNavigate}/>;
@@ -164,12 +166,12 @@ export function SpaceThreadSidebar(props:PluginThreadListProps) {
       {grouped.pinned.length>0&&<Group id="pinned" title="Закреплённые" count={count(grouped.pinned)}>{rows(grouped.pinned)}</Group>}
       {grouped.spaces.map(group=><Group key={group.space.id} id={'space-'+group.space.id} title={group.space.name} count={count(group.common)+group.projects.reduce((sum,p)=>sum+count(p.threads),0)} onNew={()=>openSpace(group.space)} onSettings={()=>{navigate.toPluginPanel('spaces',{subPath:group.space.id});props.onNavigate();}}>
         <Group id={'common-'+group.space.id} title="Общие треды" count={count(group.common)} icon="MessageSquare" onNew={()=>openSpace(group.space)}>{rows(group.common)}</Group>
-        {group.projects.map(project=><Group key={project.projectId} id={group.space.id+'-'+project.projectId} title={state.projects.find(p=>p.id===project.projectId)?.name??'Недоступный проект'} count={count(project.threads)} icon="Folder" repositoryUrl={repositories[project.projectId]} onNew={()=>openSpace(group.space,project.projectId)} onTransfer={project.threads.length?()=>setTransferSelection({projectId:project.projectId,threadIds:project.threads.map(n=>n.thread.id),currentSpaceId:group.space.id}):undefined}>
+        {group.projects.map(project=><Group key={project.projectId} id={group.space.id+'-'+project.projectId} title={state.projects.find(p=>p.id===project.projectId)?.name??'Недоступный проект'} count={count(project.threads)} icon="Folder" repository={repositories[project.projectId]} onNew={()=>openSpace(group.space,project.projectId)} onTransfer={project.threads.length?()=>setTransferSelection({projectId:project.projectId,threadIds:project.threads.map(n=>n.thread.id),currentSpaceId:group.space.id}):undefined}>
           {rows(project.threads)}
         </Group>)}
       </Group>)}
       {grouped.loose.length>0&&<div className="pst-loose-label">Треды вне пространств</div>}
-      {state.projects.map(project=>{const nodes=grouped.loose.filter(n=>n.thread.projectId===project.id);if(!nodes.length)return null;return <Group key={project.id} id={'project-'+project.id} title={project.isPersonal?'Личные треды':project.name} count={count(nodes)} icon={project.isPersonal?undefined:'Folder'} repositoryUrl={repositories[project.id]} onTransfer={!project.isPersonal?()=>setTransferSelection({projectId:project.id,threadIds:nodes.map(n=>n.thread.id)}):undefined} onNew={()=>{navigate.toCompose({projectId:project.id});props.onNavigate();}}>{rows(nodes)}</Group>;})}
+      {state.projects.map(project=>{const nodes=grouped.loose.filter(n=>n.thread.projectId===project.id);if(!nodes.length)return null;return <Group key={project.id} id={'project-'+project.id} title={project.isPersonal?'Личные треды':project.name} count={count(nodes)} icon={project.isPersonal?undefined:'Folder'} repository={repositories[project.id]} onTransfer={!project.isPersonal?()=>setTransferSelection({projectId:project.id,threadIds:nodes.map(n=>n.thread.id)}):undefined} onNew={()=>{navigate.toCompose({projectId:project.id});props.onNavigate();}}>{rows(nodes)}</Group>;})}
       {grouped.loose.some(n=>!state.projects.some(p=>p.id===n.thread.projectId))&&<Group id="other" title="Другие треды">{rows(grouped.loose.filter(n=>!state.projects.some(p=>p.id===n.thread.projectId)))}</Group>}
       {state.experimental_archived?.hasNextPage&&<button className="pst-more" disabled={state.experimental_archived.isFetchingNextPage} onClick={()=>void state.experimental_archived?.fetchNextPage()}>Загрузить ещё архивные треды</button>}
       {state.experimental_archived?.isFetchNextPageError&&<p role="alert">Архив загружен частично. Повторите загрузку.</p>}

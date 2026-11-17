@@ -16,5 +16,27 @@
 .ps-compose-actions{scroll-margin-top:16px}
 .ps-project-card>.ps-project-compose-actions{margin:10px 0}
 .ps-project-card>.ps-project-compose-actions button{margin-top:0}
+.ps-settings-section{border:1px solid var(--border);border-radius:8px;margin:12px 0;background:var(--background);min-width:0}
+.ps-settings-section>summary{cursor:pointer;padding:14px 16px;list-style-position:inside;user-select:none;overflow-wrap:anywhere}
+.ps-settings-section>summary:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:7px}
+.ps-settings-heading{display:inline-flex;vertical-align:middle;flex-direction:column;gap:5px;max-width:calc(100% - 24px)}
+.ps-settings-heading>.ps-muted{font-size:12px;line-height:1.4}
+.ps-settings-section[open]>summary{border-bottom:1px solid var(--border)}
+.ps-settings-content{padding:0 16px 16px;min-width:0}
+.ps-settings-content>label:first-child{margin-top:14px}
+.ps-settings-list{max-height:340px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}
+.ps-settings-nested{margin:10px 0}
+.ps-settings-nested>summary{padding:10px 12px}
+.ps-settings-nested>.ps-settings-content{padding:12px}
+.ps-settings-toolbar{position:sticky;top:0;z-index:2;background:var(--background);border-bottom:1px solid var(--border);padding:10px 0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.ps-settings-toolbar>h2{margin:0}
+.ps-settings-toolbar>.ps-save-actions{margin:0}
+.ps-settings-form{min-width:0}
+.ps-agent-instructions{white-space:pre-wrap;overflow:auto;max-height:280px;font-size:12px;line-height:1.5;user-select:text}
+.ps-settings-error{color:var(--destructive)}
+.ps-error>p{margin:0;line-height:1.5}
+.ps-error-details>summary{cursor:pointer;margin-top:10px}
+.ps-error-details>pre{white-space:pre-wrap;overflow:auto;max-height:240px;font-size:12px;margin-bottom:0}
+@media(max-width:760px){.ps-settings-content{padding:0 12px 12px}.ps-settings-section>summary{padding:12px}.ps-settings-toolbar{top:0}.ps-settings-toolbar>.ps-save-actions{width:100%}.ps-settings-list{max-height:280px}}
 .ps-project-card>.ps-composer{padding:14px;border:1px solid var(--border);margin:12px 0 16px}
 @media(max-width:760px){.ps-project-card>.ps-composer{padding:10px}}

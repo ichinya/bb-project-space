@@ -12,14 +12,25 @@ only when membership is unambiguous. When several spaces are listed, ask the
 user which context to use and pass that `spaceId` to both tools; do not guess.
 
 Start Repowise with `operation=context` for aliases and index readiness. Call
-`prepare` when missing/stale and poll `context` until `prepared=true,busy=false`.
-Then use `list_tools` (optionally `tool` for one full schema) and `call`.
+`prepare` when missing/stale and poll `context` until
+`prepared=true,busy=false,stale=false`.
+`busy=true` means preparation is already running: do not trigger it again.
+Poll at reasonable intervals and work from source on independent checks. If idle
+with an error, report it instead of looping preparation attempts.
+`list_tools` returns only a compact catalog. Request one full schema with
+`operation=list_tools, tool=<name>` and then `call`; avoid bulk schema dumps.
 `repo=all` federates supported operations and fans other tools out separately,
 keeping repo-labelled evidence. Narrow a large result to one alias/target.
 Honor upstream staleness, confidence, degraded and completeness fields. A new
 worktree must use its own checkout index; never answer from its base index.
 Fast initial indexes contain structure and essential Git facts; a missing
 semantic model or generated wiki is not proof that a symbol or decision is absent.
+Check freshness again after edits/commits. BB turn-start/end lifecycle hooks
+refresh already prepared indexes when enabled in space settings; they do not
+initialize missing indexes. A `freshnessWarning` means the check was incomplete:
+verify source files and disclose this limitation instead of claiming freshness.
+BB supplies these tools and instructions to each provider. AGENTS.md by itself
+does not register MCP servers, and external clients need separate MCP setup.
 
 Run `bb project-spaces list --json` to inspect spaces. Resolve paths on the
 selected machine with `bb project-spaces context <space-id> <project-id>
@@ -36,9 +47,11 @@ can change on a transfer. Restart a session to load its new space instructions.
 
 Use the chat's actual environment for the primary project. Never substitute
 the main checkout for a worktree. Other projects remain independent repositories.
-Read each directory's applicable AGENTS.md. If an ai-workspace group is configured,
+Check AGENTS.md directly at known checkout roots and relevant ancestor directories;
+never recursively scan the home directory/filesystem for instruction files. Do not
+reread identical rules already supplied by the client. If an ai-workspace group is configured,
 call `project_spaces_workspace` with `operation=context` before broad scans.
-Use `operation=list_tools` for the upstream schemas, then `operation=call`,
+Use `operation=list_tools, tool=<name>` for one upstream schema, then `operation=call`,
 `tool` and `arguments` for reads, searches, service graphs, events or CodeGraph.
 The bridge uses this thread's host and the space's current group. A globally
 connected ai-workspace MCP can have a different scope; do not substitute it.

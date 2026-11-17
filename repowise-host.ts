@@ -5,6 +5,8 @@ import type { z } from 'zod';
 import { repowiseRequest,repowiseStatus,repowiseQuery,repowiseReadTools } from './repowise-contract.ts';
 import { repowiseCommand,repowiseMcp,type ProcessOptions } from './repowise-process.ts';
 import { folderIdentity } from './folder-project.ts';
+import { checkoutFingerprints } from './repowise-freshness.ts';
+import { discoverReadTools } from './tool-discovery.ts';
 
 type Request=z.infer<typeof repowiseRequest>;
 type Status=z.infer<typeof repowiseStatus>;
@@ -23,19 +25,24 @@ export function repowiseLayout(raw:Request,dataDir:string){
 }
 async function exists(file:string){try{return (await fs.stat(file)).isDirectory()||Boolean((await fs.stat(file)).isFile());}catch{return false;}}
 async function atomic(file:string,value:unknown){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+randomUUID();try{await fs.writeFile(temp,JSON.stringify(value,null,2)+'\n',{flag:'wx'});await fs.rename(temp,file);}finally{await fs.rm(temp,{force:true});}}
-async function stateAt(directory:string):Promise<{updatedAt?:number;roots?:Record<string,string>;error?:string}>{try{return JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'));}catch{return {};}}
+async function stateAt(directory:string):Promise<{updatedAt?:number;roots?:Record<string,string>;fingerprints?:Record<string,string|null>;error?:string}>{try{return JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'));}catch{return {};}}
 export async function inspectRepowise(request:Request,dataDir:string,options:ProcessOptions):Promise<Status>{
   const {directory,roots}=repowiseLayout(request,dataDir),state=await stateAt(directory);let version:string|null=null,error:string|null=null;
-  try{const key=options.binary??'repowise';let cached=versions.get(key);if(!cached||cached.until<Date.now()){cached={until:Date.now()+30000,value:repowiseCommand(['--version'],{...options,timeoutMs:10000}).then(text=>text.trim())};versions.set(key,cached);}version=await cached.value;}catch(cause){error=message(cause);}
+  try{const key=options.binary??'repowise';let cached=versions.get(key);if(!cached||cached.until<Date.now()){cached={until:Date.now()+30000,value:repowiseCommand(['--version'],{...options,timeoutMs:10000}).then(text=>text.trim())};versions.set(key,cached);}version=await cached.value;}catch(cause){if((cause as NodeJS.ErrnoException).code!=='ENOENT')error=message(cause);}
   const rows=await Promise.all(roots.map(async root=>({...root,exists:await exists(root.path),indexed:await exists(path.join(root.path,'.repowise','wiki.db'))&&await exists(path.join(root.path,'.repowise','state.json')),message:state.roots?.[root.alias]??'Не подготовлен'})));
-  return {available:!!version,version,workspacePath:directory,prepared:!!state.updatedAt&&rows.every(r=>r.indexed),busy:jobs.has(directory),error:error??state.error??null,updatedAt:state.updatedAt??null,roots:rows};
+  const previousError=!version&&/spawn.*ENOENT/.test(state.error??'')?null:state.error;
+  const prepared=!!state.updatedAt&&rows.every(r=>r.indexed),current=prepared?await checkoutFingerprints(roots,options):{};
+  const stale=prepared&&roots.some(root=>current[root.alias]!==null&&current[root.alias]!==state.fingerprints?.[root.alias]);
+  const uncertain=prepared&&roots.some(root=>current[root.alias]===null);
+  return {available:!!version,version,workspacePath:directory,prepared,stale,freshnessWarning:uncertain?'Не удалось полностью проверить изменения. Актуальность этих индексов не подтверждена.':null,busy:jobs.has(directory),error:error??previousError??null,updatedAt:state.updatedAt??null,roots:rows};
 }
 export async function synchronizeRepowise(request:Request,dataDir:string,options:ProcessOptions):Promise<Status>{
   const layout=repowiseLayout(request,dataDir),{directory,roots}=layout;const running=jobs.get(directory);if(running){await running;return inspectRepowise(request,dataDir,options);}
   const operation=(async()=>{
-    const state:{updatedAt?:number;roots:Record<string,string>;error?:string}={roots:{}};
+    const state:{updatedAt?:number;roots:Record<string,string>;fingerprints?:Record<string,string|null>;error?:string}={roots:{}};
     await atomic(path.join(directory,'.repowise-workspace.yaml'),layout.manifest);await atomic(path.join(directory,'state.json'),state);
     try{
+      const before=await checkoutFingerprints(roots,options);
       const sizes=await Promise.all(roots.map(async root=>({root,size:await fs.stat(path.join(root.path,'.repowise','wiki.db')).then(s=>s.size).catch(()=>0)})));
       const failures:string[]=[];
       // Bootstrap small/new members first; a large primary index must not starve its siblings.
@@ -59,7 +66,7 @@ export async function synchronizeRepowise(request:Request,dataDir:string,options
       if(failures.length)throw new Error(failures.join('\n'));
       // The managed workspace references external folders; it never scans their common parent.
       await serialize(()=>repowiseCommand(['workspace','update','--index-only','--working-tree'],{...options,cwd:directory,timeoutMs:900000,safePaths:roots.map(r=>r.path)}));
-      state.updatedAt=Date.now();await atomic(path.join(directory,'state.json'),state);
+      state.updatedAt=Date.now();state.fingerprints=before;await atomic(path.join(directory,'state.json'),state);
     }catch(cause){state.error=message(cause);await atomic(path.join(directory,'state.json'),state);throw cause;}
   })();jobs.set(directory,operation);
   try{await operation;}finally{jobs.delete(directory);}
@@ -91,8 +98,9 @@ export async function queryRepowise(request:Request,query:z.infer<typeof repowis
   const layout=repowiseLayout(request,dataDir),status=await inspectRepowise(request,dataDir,options);if(query.operation==='context')return status;
   guardRepowisePaths(query.arguments,query.repo==='all'?layout.roots:layout.roots.filter(r=>r.alias===query.repo));
   if(!status.prepared)throw new Error('Индексы этого пространства/checkout не подготовлены. Вызовите operation=prepare, затем context для проверки готовности.');
+  if(status.stale)throw new Error('После индексации изменились файлы или коммит. Вызовите operation=prepare и дождитесь busy=false, prepared=true, stale=false.');
   const calls=repowiseCalls(query,layout.roots.map(r=>r.alias));
   const results=await repowiseMcp(layout.directory,calls,{...options,safePaths:layout.roots.map(r=>r.path)});
-  if(query.operation==='list_tools'){const value=results[0] as {tools:{name:string}[]};return {tools:value.tools.filter(t=>repowiseReadTools.some(name=>name===t.name)&&(!query.tool||query.tool===t.name))};}
-  return {scope:layout.roots,results:results.map((result,index)=>({repo:(calls[index]!.params as {arguments:{repo:string}}).arguments.repo,...unpack(result) as object}))};
+  if(query.operation==='list_tools')return discoverReadTools(results[0],new Set(repowiseReadTools),query.tool);
+  return {scope:layout.roots,freshnessWarning:status.freshnessWarning??null,results:results.map((result,index)=>({repo:(calls[index]!.params as {arguments:{repo:string}}).arguments.repo,...unpack(result) as object}))};
 }

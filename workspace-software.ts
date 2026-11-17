@@ -25,7 +25,7 @@ const binaryName=()=>process.platform==='win32'?'ai-workspace.exe':'ai-workspace
 export async function workspaceExecutable(dataDir:string):Promise<string> {
   try {const active=JSON.parse(await fs.readFile(path.join(softwareDir(dataDir),'active.json'),'utf8'));if(!versionPattern.test(active.version))throw new Error('Invalid version');const binary=path.join(softwareDir(dataDir),active.version,binaryName());if(!(await fs.lstat(binary)).isFile())throw new Error('Missing binary');return binary;}catch{return 'ai-workspace';}
 }
-async function download(url:string,options:Options,limit=maxBytes):Promise<Buffer> {
+export async function downloadSoftwareFile(url:string,options:Options,limit=maxBytes):Promise<Buffer> {
   const response=await (options.fetch??fetch)(url,{headers:{'User-Agent':'BB-Project-Spaces','Accept':url.startsWith('https://api.github.com/')?'application/vnd.github+json':'application/octet-stream'},signal:AbortSignal.any([AbortSignal.timeout(90000),...(options.signal?[options.signal]:[])])});
   if(!response.ok)throw new Error(`GitHub: HTTP ${response.status}`);
   if(Number(response.headers.get('content-length'))>limit)throw new Error('Релиз превышает допустимый размер.');
@@ -34,6 +34,7 @@ async function download(url:string,options:Options,limit=maxBytes):Promise<Buffe
   try {while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw new Error('Релиз превышает допустимый размер.');chunks.push(value);}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   return Buffer.concat(chunks);
 }
+const download=downloadSoftwareFile;
 export async function latestWorkspaceRelease(options:Options={}):Promise<{release:Release;checkedAt:number}> {
   if(!options.fetch&&cached&&Date.now()-cached.checkedAt<10*60*1000)return cached;
   const raw=await download('https://api.github.com/repos/lee-to/ai-workspace/releases/latest',options,2*1024*1024);
@@ -51,8 +52,8 @@ export async function inspectWorkspaceSoftware(dataDir:string,checkLatest:boolea
 }
 
 /** Extract one regular executable in memory. Archive paths never become disk paths. */
-export function extractWorkspaceBinary(archive:Buffer,assetName:string):Buffer {
-  const name=assetName.endsWith('.zip')?'ai-workspace.exe':'ai-workspace';
+export function extractWorkspaceBinary(archive:Buffer,assetName:string,binaryPath?:string):Buffer {
+  const name=binaryPath??(assetName.endsWith('.zip')?'ai-workspace.exe':'ai-workspace');
   if(assetName.endsWith('.zip')){
     let count=0;const files=unzipSync(archive,{filter:file=>{if(file.name!==name)return false;count++;if(file.originalSize>maxBytes)throw new Error('Бинарник слишком большой.');return true;}});
     if(count!==1||!files[name]?.length)throw new Error('В ZIP нет единственного бинарника ai-workspace.');return Buffer.from(files[name]);

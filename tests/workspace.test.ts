@@ -7,6 +7,7 @@ import { workspaceRoots } from '../workspace-model.ts';
 import { inspectWorkspace,synchronizeWorkspace } from '../workspace-host.ts';
 import { workspaceCommand,workspaceMcp,mcpJson } from '../workspace-process.ts';
 import type { Space } from '../model.ts';
+import Database from 'better-sqlite3';
 
 test('workspace folders are host-specific and duplicate source/reference paths are initialized once',()=>{
   const space:Space={id:'5d8b342e-3fbd-4c77-9564-725c77466c97',name:'Test',projectIds:['p'],primaryProjectId:'p',instructions:'',contextGroup:'test',folders:[{hostId:'win',path:'d:/PROJECT/'},{hostId:'linux',path:'/srv/extra'}]};
@@ -22,7 +23,7 @@ test('real CLI initializes, merges configs, scopes MCP, preserves other groups a
   const a=path.join(root,'alpha'),b=path.join(root,'beta'),data=path.join(root,'host-data');
   await fs.mkdir(a);await fs.mkdir(b);await fs.mkdir(data);
   await fs.writeFile(path.join(a,'README.md'),'# Alpha\nShared context.');await fs.writeFile(path.join(b,'README.md'),'# Beta');
-  const options={cwd:a,env:{AI_WORKSPACE_DB:path.join(root,'isolated.db')}};
+  const options={cwd:a,binary:process.env.WORKSPACE_TEST_BINARY,env:{AI_WORKSPACE_DB:path.join(root,'isolated.db')}};
   const id='5d8b342e-3fbd-4c77-9564-725c77466c97',second='f06eb5c9-402c-42f5-af8e-e61a21262b02';
   const request={spaceId:id,group:'space-group',roots:[{path:a,name:'Alpha'},{path:b,name:'Beta'}]};
   try {
@@ -42,6 +43,18 @@ test('real CLI initializes, merges configs, scopes MCP, preserves other groups a
     const result=await synchronizeWorkspace(request,data,options);
     assert.deepEqual(result.results.filter(r=>!r.ok),[],JSON.stringify(result.results));assert.equal(result.status.available,true);assert.equal(result.status.folders.length,2);
     for(const folder of result.status.folders){assert.equal(folder.initialized,true);assert.ok(folder.groups.includes('space-group'));assert.ok(folder.configGroups.includes('space-group'));}
+    if(process.platform==='win32'){
+      // Reproduce real DBs migrated from old Windows path spelling. Seed only
+      // this test's isolated DB, then let the real CLI create its current record.
+      const fixture=new Database(options.env.AI_WORKSPACE_DB);
+      try{
+        const old=fixture.prepare('SELECT id, path, slug FROM projects WHERE name = ?').get(original.name) as {id:number;path:string;slug:string};
+        fixture.prepare('UPDATE projects SET path = ?, slug = ? WHERE id = ?').run(a.toLowerCase(),old.slug+'-legacy',old.id);
+        fixture.prepare('DELETE FROM project_groups WHERE project_id = ? AND group_id IN (SELECT id FROM groups WHERE name = ?)').run(old.id,'space-group');
+      }finally{fixture.close();}
+      await workspaceCommand(['init'],options);
+      const checked=await inspectWorkspace(request,options);assert.ok(checked.folders.find(folder=>folder.path===a)!.groups.includes('space-group'),'historical DB alias must not hide current membership');
+    }
     let config=JSON.parse(await fs.readFile(path.join(a,'.ai-workspace.json'),'utf8'));assert.equal(config.name,original.name);assert.equal(config.slug,original.slug);assert.ok(config.groups.includes('manual'));assert.deepEqual(config.share,original.share);
     const context=mcpJson(await workspaceMcp('tools/call',{name:'workspace_context',arguments:{}},options,'space-group')) as {groups:{name:string}[];projects:{name:string;groups:string[]}[]};
     assert.deepEqual(context.groups.map(g=>g.name),['space-group']);assert.equal(context.projects.length,2);assert.ok(context.projects.every(p=>p.groups.every(g=>g==='space-group')));

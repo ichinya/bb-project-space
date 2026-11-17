@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.2.0
+
+- Release the shared-context workflow around ai-workspace for materials/groups
+  and Repowise for code evidence across related repositories on the actual host.
+- Include managed CLI installation/updates, Repowise freshness checks and BB
+  lifecycle refresh, compact tool discovery and opt-in managed AGENTS.md blocks.
+- Document setup, permissions, downloads and upgrading from the 0.1 source range;
+  update the marketplace overview. Saved spaces and thread placement stay compatible.
+
+## 0.1.26
+
+- Return compact tool catalogs from both bridges; return a full schema only for
+  one explicitly named read tool. Reject unavailable/write-tool schema requests.
+- Guide agents to check instruction files at known paths instead of recursively
+  scanning home directories, and avoid repeated prepare calls while indexing runs.
+
+## 0.1.25
+
+- Keep AGENTS.md blocks compact: link to one selected space's context instead
+  of copying full instructions for every membership. Update existing owned blocks.
+- Inject the selected snapshot rules once, preserving the path map while dropping
+  its generated duplicate instructions. Preserve unknown legacy metadata.
+- Refuse writes above a protective 32 KiB file budget without truncating user rules.
+
+## 0.1.24
+
+- Manage one project-space block in project AGENTS.md files with opt-in automatic
+  updates per device after saving settings and on plugin reload. Preserve other
+  instructions, line endings and an original backup; expose results/retry in settings.
+- Combine shared-project memberships in one conditional block and remove only
+  disabled/deleted entries. Keep reference folders unchanged; reject malformed
+  markers, linked files and unsupported encodings without rewriting them.
+
+## 0.1.23
+
+- Resolve the current native ai-workspace registration when historical Windows
+  path/case aliases exist; show its groups instead of the first stale DB record.
+- Verify requested membership through MCP and the config before reporting a
+  successful folder update. Preserve existing registrations and memberships.
+
+## 0.1.22
+
+- Refresh already prepared Repowise indexes from BB turn lifecycle events on the
+  thread's actual device and worktree; coalesce checks and allow opt-out per space.
+- Detect changes in HEAD, staged/unstaged and untracked files before code queries;
+  reject stale evidence and report incomplete freshness checks explicitly.
+- Supply scoped context instructions to all BB providers and show tool connection
+  details plus a copyable AGENTS.md instruction block in collapsed settings.
+  No global editor/MCP configuration or Git hooks are overwritten.
+
+## 0.1.21
+
+- Show GitLab and GitVerse repository icons and links in project rows; use a
+  generic Git icon for other servers. Support HTTPS/SSH, nested GitLab groups,
+  GitVerse SSH ports and legacy `/sc/` remotes without exposing credentials.
+- Refresh repository links after a project is added to the catalog. Preserve
+  existing GitHub PR badges and the legacy GitHub catalog field.
+
+## 0.1.20
+
+- Install and update Repowise on the selected device using an isolated managed
+  Python environment. Verify package size, SHA-256, origin and CLI version;
+  activate only after success, preserve PATH installations and avoid downgrades.
+- Bootstrap verified native uv and managed Python when needed, including Linux
+  devices whose system Python has no ensurepip. Use managed binaries for status,
+  indexing and cross-repository MCP queries.
+- Collapse space settings into sections with concise version/readiness summaries,
+  searchable project selection and separately collapsed folder/configuration lists.
+  Keep save/close controls visible while scrolling and installation errors visible.
+
 ## 0.1.19
 
 - Package the pinned Plugin SDK as a production dependency so Git/marketplace

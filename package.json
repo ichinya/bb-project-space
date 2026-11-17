@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-project-spaces",
-  "version": "0.1.19",
+  "version": "0.2.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
   },
   "bb": {
     "name": "Project Spaces",
-    "description": "Related BB projects, primary folders and shared agent context without per-chat history exports.",
+    "description": "Related repositories and threads with ai-workspace shared materials and Repowise code context.",
     "branding": {
       "icon": "Folder"
     },

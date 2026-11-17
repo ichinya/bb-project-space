@@ -4,11 +4,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { repowiseLayout,repowiseCalls,synchronizeRepowise,queryRepowise,guardRepowisePaths } from '../repowise-host.ts';
+import { repowiseLayout,repowiseCalls,synchronizeRepowise,queryRepowise,guardRepowisePaths,inspectRepowise } from '../repowise-host.ts';
 import { repowiseQuery } from '../repowise-contract.ts';
 import { contextRoots,contextSpace } from '../space-context.ts';
 import type { Space } from '../model.ts';
 import { repowiseEnvironment } from '../repowise-process.ts';
+import { checkoutFingerprints } from '../repowise-freshness.ts';
 const space:Space={id:'1a3a9440-ab6a-4429-838d-b532e3382df2',name:'Platform',projectIds:['api','web'],primaryProjectId:'api',folders:[],instructions:'',contextGroup:'platform'};
 test('Git ownership exceptions are per-process, preserve existing overrides and list exact roots',()=>{
   const env=repowiseEnvironment({cwd:'/plugin',safePaths:['D:\\api','D:\\web'],env:{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'core.longpaths',GIT_CONFIG_VALUE_0:'true'}});
@@ -52,6 +53,21 @@ test('an unavailable folder does not prevent checking the other selected folders
     assert.equal(Object.keys(state.roots).length,2);assert.equal(state.updatedAt,undefined);
   }finally{assert.ok(path.resolve(temp).startsWith(path.resolve(os.tmpdir())+path.sep));await fs.rm(temp,{recursive:true,force:true});}
 });
+
+test('old prepared indexes require a freshness baseline; changed evidence is rejected before MCP starts',async()=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'ps-stale-index-'));
+  try{
+    const root=path.join(temp,'plain');await fs.mkdir(path.join(root,'.repowise'),{recursive:true});await fs.writeFile(path.join(root,'.repowise','wiki.db'),'fixture');await fs.writeFile(path.join(root,'.repowise','state.json'),'{}');await fs.writeFile(path.join(root,'code.ts'),'one');
+    const request={spaceId:space.id,name:'Fixture',roots:[{name:'Plain',path:root}]},layout=repowiseLayout(request,path.join(temp,'data')),options={cwd:temp,binary:process.execPath};await fs.mkdir(layout.directory,{recursive:true});
+    const stateFile=path.join(layout.directory,'state.json');await fs.writeFile(stateFile,JSON.stringify({updatedAt:1}));
+    assert.equal((await inspectRepowise(request,path.join(temp,'data'),options)).stale,true);
+    await fs.writeFile(stateFile,JSON.stringify({updatedAt:1,fingerprints:await checkoutFingerprints(layout.roots)}));
+    assert.equal((await inspectRepowise(request,path.join(temp,'data'),options)).stale,false);
+    await fs.writeFile(path.join(root,'code.ts'),'two');await fs.utimes(path.join(root,'code.ts'),new Date(),new Date(Date.now()+2000));
+    await assert.rejects(()=>queryRepowise(request,{operation:'call',repo:'all',tool:'get_overview'},path.join(temp,'data'),options),/operation=prepare/);
+    const unknown=await inspectRepowise(request,path.join(temp,'data'),{...options,env:{PATH:temp}});assert.equal(unknown.stale,false);assert.match(unknown.freshnessWarning!,/не подтверждена/);
+  }finally{assert.ok(temp.startsWith(os.tmpdir()+path.sep));await fs.rm(temp,{recursive:true,force:true});}
+});
 test('real Repowise indexes two repos and a plain folder, federates their context, and installs no editor hooks',{skip:process.env.RUN_REPOWISE_INTEGRATION!=='1',timeout:900000},async()=>{
   const temp=await fs.mkdtemp(path.join(os.tmpdir(),'project-spaces-repowise-'));
   const git=(cwd:string,args:string[])=>execFileSync('git',args,{cwd,windowsHide:true,stdio:'pipe'}).toString();
@@ -67,7 +83,7 @@ test('real Repowise indexes two repos and a plain folder, federates their contex
       roots.push({name:name!,path:directory});
     }
     const request={spaceId:space.id,name:space.name,roots},data=path.join(temp,'data'),options={cwd:temp,timeoutMs:180000};
-    const state=await synchronizeRepowise(request,data,options);assert.equal(state.prepared,true,JSON.stringify(state));assert.equal(state.roots.length,3);
+    const state=await synchronizeRepowise(request,data,options);assert.equal(state.prepared,true,JSON.stringify(state));assert.equal(state.stale,false,JSON.stringify(state));assert.equal(state.roots.length,3);
     const discovery=await queryRepowise(request,repowiseQuery.parse({operation:'list_tools',tool:'search_codebase'}),data,options);
     assert.equal((discovery as {tools:{name:string}[]}).tools[0]!.name,'search_codebase');
     const found=await queryRepowise(request,repowiseQuery.parse({operation:'call',tool:'search_codebase',arguments:{query:'shared_context_marker'}}),data,options);

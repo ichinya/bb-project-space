@@ -4,13 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { workspaceCommand,workspaceMcp,mcpJson,type WorkspaceOptions } from './workspace-process.ts';
 import type { z } from 'zod';
 import { workspaceRequest,workspaceStatus } from './workspace-contract.ts';
+import { registeredProject,type Registered } from './workspace-registry.ts';
 
 type Request=z.infer<typeof workspaceRequest>;
 type Status=z.infer<typeof workspaceStatus>;
 type Config=Record<string,unknown>&{name:string;groups?:string[]};
 type Member={path:string;group:string;owners:string[];original:boolean};
 type State={members:Member[]};
-type Registered={path:string;name:string;groups:{name:string}[]};
 const key=(value:string)=>process.platform==='win32'?path.resolve(value.replace(/^\\\\\?\\/,'')).toLowerCase():path.resolve(value);
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 
@@ -56,7 +56,7 @@ export async function inspectWorkspace(request:Request,options:WorkspaceOptions)
     const projects=await registered(options);
     const folders=await Promise.all(request.roots.map(async root=>{
       const result={...root,exists:false,initialized:false,groups:[] as string[],configPath:path.join(root.path,'.ai-workspace.json'),configExists:false,configGroups:[] as string[],error:null as string|null};
-      try {const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');result.exists=true;const project=projects.find(p=>key(p.path)===key(canonical));result.initialized=!!project;result.groups=project?.groups.map(g=>g.name)??[];const config=await configAt(canonical);result.configExists=!!config.config;result.configGroups=config.config?.groups??[];validateSharedPaths(config.config);}catch(error){result.error=message(error);}return result;
+      try {const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');result.exists=true;const project=registeredProject(projects,canonical);result.initialized=!!project;result.groups=project?.groups.map(g=>g.name)??[];const config=await configAt(canonical);result.configExists=!!config.config;result.configGroups=config.config?.groups??[];validateSharedPaths(config.config);}catch(error){result.error=message(error);}return result;
     }));
     return {available:true,version,group:request.group,error:null,folders};
   }catch(error){return {available:false,version,group:request.group,error:message(error),folders:[]};}
@@ -73,7 +73,7 @@ export async function synchronizeWorkspace(request:Request,dataDir:string,option
   for(const root of request.roots){
     try {
       const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');desired.add(key(canonical));
-      const existing=projects.find(p=>key(p.path)===key(canonical));
+      const existing=registeredProject(projects,canonical);
       const before=await configAt(canonical);
       validateSharedPaths(before.config);
       let member=state.members.find(m=>key(m.path)===key(canonical)&&m.group===request.group);
@@ -87,6 +87,10 @@ export async function synchronizeWorkspace(request:Request,dataDir:string,option
       await updateGroups(canonical,[...new Set([...(config.config?.groups??[]),request.group])],dataDir);
       // init reconciles only this checkout's config; CLI sync also prunes other projects.
       await workspaceCommand(['init'],local);
+      // An exit code is not proof that the requested group is visible to MCP.
+      const confirmed=registeredProject(await registered(options),canonical);
+      const confirmedConfig=await configAt(canonical);
+      if(!confirmed?.groups.some(group=>group.name===request.group)||!confirmedConfig.config?.groups?.includes(request.group))throw new Error(`Группа ${JSON.stringify(request.group)} не подтверждена в регистрации ai-workspace и конфиге. Обновление не завершено; повторите синхронизацию.`);
       results.push({path:root.path,ok:true,message:existing?'Конфиг и группа обновлены.':'Инициализация и конфиг созданы.'});
     }catch(error){results.push({path:root.path,ok:false,message:message(error)});}
   }

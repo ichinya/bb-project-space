@@ -5,6 +5,8 @@ export const spaceSchema = z.object({
   projectIds:z.array(z.string().min(1)).min(1).max(40), primaryProjectId:z.string().min(1),
   folders:z.array(z.object({hostId:z.string().min(1),path:z.string().min(1).max(2048)})).max(40),
   instructions:z.string().max(12000), contextGroup:z.string().trim().max(100),
+  repowiseAutoRefresh:z.boolean().optional(),
+  agentsHosts:z.array(z.string().min(1)).max(80).optional(),
 });
 export type Space = z.infer<typeof spaceSchema>;
 export type Project = {id:string;name:string;sources:{hostId:string;path:string}[]};

@@ -1,6 +1,7 @@
 import { defineRpcContract } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { repowiseRequest,repowiseStatus,repowiseQuery } from './repowise-contract.ts';
+import { repowiseRequest,repowiseStatus,repowiseQuery,repowiseSoftware } from './repowise-contract.ts';
+import { agentsRequest,agentsResult } from './agents-contract.ts';
 
 export const workspaceRoot=z.object({path:z.string().min(1).max(2048),name:z.string().min(1).max(100)});
 export const workspaceStatus=z.object({
@@ -10,6 +11,9 @@ export const workspaceStatus=z.object({
 export const workspaceRequest=z.object({spaceId:z.string().uuid(),group:z.string().trim().max(100),roots:z.array(workspaceRoot).min(1).max(80)});
 export const workspaceSoftware=z.object({installedVersion:z.string().nullable(),binary:z.string().nullable(),managed:z.boolean(),latestVersion:z.string().nullable(),releaseUrl:z.string().nullable(),checkedAt:z.number().nullable(),updateAvailable:z.boolean(),supported:z.boolean(),error:z.string().nullable()});
 export const workspaceHostContract=defineRpcContract({
+  agents_sync:{input:agentsRequest,output:agentsResult},
+  repowise_software:{input:z.object({checkLatest:z.boolean()}),output:repowiseSoftware},
+  repowise_install:{input:z.object({}),output:repowiseSoftware},
   repowise_inspect:{input:repowiseRequest,output:repowiseStatus},
   repowise_sync:{input:repowiseRequest,output:repowiseStatus},
   repowise_query:{input:z.object({workspace:repowiseRequest,query:repowiseQuery}),output:z.unknown()},

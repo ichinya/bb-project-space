@@ -4,15 +4,24 @@ import { z } from 'zod';
 import { spaceSchema, validateSpace, contextForSpace, type Space } from './model.ts';
 import { readThreadBinding } from './threads.ts';
 import { githubRepositoryUrl } from './github.ts';
+import { gitRepository } from './repository.ts';
 import { workspaceHostContract,workspaceStatus,workspaceSoftware } from './workspace-contract.ts';
 import { workspaceRoots } from './workspace-model.ts';
 import { folderProjectInput,makeFolderProjectAdder } from './folder-project.ts';
 import { transferInput,transferResult,makeThreadTransfer } from './thread-transfer.ts';
-import { repowiseStatus,repowiseQuery } from './repowise-contract.ts';
+import { repowiseStatus,repowiseQuery,repowiseSoftware } from './repowise-contract.ts';
 import { contextSpace,contextRoots } from './space-context.ts';
 import { continuationSource,makeThreadInheritance } from './thread-inheritance.ts';
-const projectSchema=z.object({id:z.string(),name:z.string(),githubUrl:z.string().nullable(),sources:z.array(z.object({hostId:z.string(),path:z.string()}))});
+import { makeRepowiseAutomation } from './repowise-automation.ts';
+import { agentContextInstructions,workspaceMapOnly } from './agent-context.ts';
+import { agentsResult } from './agents-contract.ts';
+import { discoverReadTools } from './tool-discovery.ts';
+const projectSchema=z.object({id:z.string(),name:z.string(),githubUrl:z.string().nullable(),repository:z.object({provider:z.enum(['github','gitlab','gitverse','git']),label:z.string(),url:z.string().url()}).nullable().default(null),sources:z.array(z.object({hostId:z.string(),path:z.string()}))});
 export const rpcContract=defineRpcContract({
+  agents_status:{input:z.object({hostId:z.string().min(1)}),output:z.object({busy:z.boolean(),error:z.string().nullable(),last:agentsResult.nullable()})},
+  agents_sync:{input:z.object({hostId:z.string().min(1),revision:z.number().int()}),output:z.object({started:z.boolean()})},
+  repowise_software:{input:z.object({hostId:z.string().min(1),checkLatest:z.boolean()}),output:repowiseSoftware},
+  repowise_install:{input:z.object({hostId:z.string().min(1)}),output:repowiseSoftware},
   repowise_status:{input:z.object({id:z.string().uuid(),hostId:z.string().min(1)}),output:repowiseStatus},
   repowise_sync:{input:z.object({id:z.string().uuid(),hostId:z.string().min(1),revision:z.number().int()}),output:z.object({started:z.boolean()})},
   thread_transfer:{input:transferInput,output:transferResult},
@@ -36,7 +45,19 @@ export default async function plugin(bb:BbPluginApi){
   db.exec('CREATE TABLE IF NOT EXISTS spaces (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL); INSERT OR IGNORE INTO state VALUES (1,0)');
   const read=():Space[]=>(db.prepare('SELECT data FROM spaces ORDER BY id').all() as {data:string}[]).map(r=>spaceSchema.parse(JSON.parse(r.data)));
   const revision=()=>(db.prepare('SELECT revision FROM state WHERE id=1').get() as {revision:number}).revision;
-  const projects=async()=>(await bb.sdk.projects.list()).map(p=>({id:p.id,name:p.name,githubUrl:githubRepositoryUrl(p.gitRemoteUrl),sources:p.sources.filter(s=>s.type==='local_path').map(s=>({hostId:s.hostId,path:s.path}))}));
+  const projects=async()=>(await bb.sdk.projects.list()).map(p=>({id:p.id,name:p.name,githubUrl:githubRepositoryUrl(p.gitRemoteUrl),repository:gitRepository(p.gitRemoteUrl),sources:p.sources.filter(s=>s.type==='local_path').map(s=>({hostId:s.hostId,path:s.path}))}));
+  const agentsJobs=new Map<string,Promise<unknown>>(),agentsPending=new Set<string>(),agentsLast=new Map<string,z.infer<typeof agentsResult>>(),agentsErrors=new Map<string,string>();
+  function refreshAgents(hostId:string):boolean{
+    if(disposeContext.signal.aborted)return false;
+    if(agentsJobs.has(hostId)){agentsPending.add(hostId);return false;}
+    agentsErrors.delete(hostId);
+    const task=(async()=>{
+      const catalog=await projects(),spaces=read().filter(space=>space.agentsHosts?.includes(hostId));
+      const targets=spaces.flatMap(space=>space.projectIds.flatMap(id=>catalog.find(project=>project.id===id)?.sources.filter(source=>source.hostId===hostId).map(source=>({path:source.path,spaces:[space]}))??[]));
+      const result=await host.call('agents_sync',{targets},{hostId,timeoutMs:120000,signal:disposeContext.signal});agentsLast.set(hostId,result);
+    })();agentsJobs.set(hostId,task);
+    void task.catch(cause=>{agentsErrors.set(hostId,String(cause));}).finally(()=>{agentsJobs.delete(hostId);bb.realtime.publish('agents-changed',{hostId});if(agentsPending.delete(hostId))refreshAgents(hostId);});return true;
+  }
   const addFolderProject=makeFolderProjectAdder(bb.sdk);
   const transfer=makeThreadTransfer(bb.sdk,read,projects,()=>bb.realtime.publish('thread-bindings-changed',{}));
   const inheritThread=makeThreadInheritance(bb.sdk,read,()=>bb.realtime.publish('thread-bindings-changed',{}));
@@ -58,7 +79,7 @@ export default async function plugin(bb:BbPluginApi){
     return true;
   }
   async function repowiseState(input:Awaited<ReturnType<typeof repowiseInput>>,hostId:string){
-    const key=hostId+'|'+JSON.stringify(input),status=await host.call('repowise_inspect',input,{hostId,timeoutMs:30000});
+    const key=hostId+'|'+JSON.stringify(input),status=await host.call('repowise_inspect',input,{hostId,timeoutMs:120000});
     return {...status,busy:status.busy||contextJobs.has(key),error:contextErrors.get(key)??status.error};
   }
   async function workspaceInput(id:string,hostId:string,requireGroup=false){
@@ -67,12 +88,31 @@ export default async function plugin(bb:BbPluginApi){
     const roots=workspaceRoots(space,await projects(),hostId);if(!roots.length)throw new Error('На этом устройстве нет папок пространства.');
     return {spaceId:space.id,group:space.contextGroup,roots};
   }
+  const automation=makeRepowiseAutomation({
+    resolve:async thread=>{
+      if(!read().some(space=>space.projectIds.includes(thread.projectId)))return null;
+      const metadata=await bb.sdk.threads.getPluginMetadata({threadId:thread.id});
+      let space:Space;try{space=contextSpace(read(),metadata,thread.projectId);}catch{return null;}
+      const current=read().find(candidate=>candidate.id===space.id);if(!current||current.repowiseAutoRefresh===false)return null;
+      const environment=await bb.sdk.environments.get({environmentId:thread.environmentId!});if(!environment.path)return null;
+      return {enabled:true,hostId:environment.hostId,workspace:await repowiseInput(space.id,environment.hostId,thread.projectId,environment.path)};
+    },
+    inspect:repowiseState,start:startRepowise,onError:cause=>bb.log.debug('Repowise automatic refresh skipped: '+String(cause)),
+  });
+  bb.onDispose(()=>automation.dispose());
+  bb.events.on('thread.active',({thread})=>automation.notify(thread));
+  bb.events.on('thread.idle',({thread})=>automation.notify(thread));
+  bb.events.on('thread.failed',({thread})=>automation.notify(thread));
   function mutate(expected:number,operation:()=>void){db.transaction(()=>{if(revision()!==expected)throw new Error('Настройки изменены в другом окне. Обновите страницу перед сохранением.');operation();db.prepare('UPDATE state SET revision=revision+1 WHERE id=1').run();})();bb.realtime.publish('spaces-changed',{revision:revision()});}
   const handlers={
+    agents_status:async({hostId}:{hostId:string})=>({busy:agentsJobs.has(hostId),error:agentsErrors.get(hostId)??null,last:agentsLast.get(hostId)??null}),
+    agents_sync:async({hostId,revision:expected}:{hostId:string;revision:number})=>{if(expected!==revision())throw new Error('Настройки изменились. Обновите страницу.');return {started:refreshAgents(hostId)};},
+    repowise_software:async({hostId,checkLatest}:{hostId:string;checkLatest:boolean})=>host.call('repowise_software',{checkLatest},{hostId,timeoutMs:120000}),
+    repowise_install:async({hostId}:{hostId:string})=>{const result=await host.call('repowise_install',{},{hostId,timeoutMs:1500000});for(const key of contextErrors.keys())if(key.startsWith(hostId+'|'))contextErrors.delete(key);bb.realtime.publish('repowise-changed',{hostId});return result;},
     repowise_status:async({id,hostId}:{id:string;hostId:string})=>repowiseState(await repowiseInput(id,hostId),hostId),
     repowise_sync:async({id,hostId,revision:expected}:{id:string;hostId:string;revision:number})=>{if(expected!==revision())throw new Error('Настройки изменились. Обновите страницу.');return {started:startRepowise(await repowiseInput(id,hostId),hostId)};},
     thread_transfer:transfer,
-    project_from_folder:async(input:z.input<typeof folderProjectInput>)=>{const result=await addFolderProject(input),p=result.project;bb.realtime.publish('catalog-changed',{});return {project:{id:p.id,name:p.name,githubUrl:githubRepositoryUrl(p.gitRemoteUrl),sources:p.sources.map(s=>({hostId:s.hostId,path:s.path}))},reused:result.reused};},
+    project_from_folder:async(input:z.input<typeof folderProjectInput>)=>{const result=await addFolderProject(input),p=result.project;bb.realtime.publish('catalog-changed',{});return {project:{id:p.id,name:p.name,githubUrl:githubRepositoryUrl(p.gitRemoteUrl),repository:gitRepository(p.gitRemoteUrl),sources:p.sources.map(s=>({hostId:s.hostId,path:s.path}))},reused:result.reused};},
     workspace_software:async({hostId,checkLatest}:{hostId:string;checkLatest:boolean})=>host.call('software',{checkLatest},{hostId,timeoutMs:120000}),
     workspace_install:async({hostId}:{hostId:string})=>{const result=await host.call('install',{},{hostId,timeoutMs:300000});bb.realtime.publish('workspace-changed',{hostId});return result;},
     workspace_status:async({id,hostId}:{id:string;hostId:string})=>host.call('inspect',await workspaceInput(id,hostId),{hostId,timeoutMs:60000}),
@@ -82,8 +122,8 @@ export default async function plugin(bb:BbPluginApi){
       try {const result=await host.call('synchronize',await workspaceInput(id,hostId,true),{hostId,timeoutMs:300000});bb.realtime.publish('workspace-changed',{id,hostId});return result;}finally{syncing.delete(id);}
     },
     catalog:async()=>({spaces:read(),projects:await projects(),hosts:(await bb.sdk.hosts.list()).map(h=>({id:h.id,name:h.name})),revision:revision()}),
-    save:async({space,revision:expected}:{space:Space;revision:number})=>{if(syncing.has(space.id))throw new Error('Дождитесь синхронизации ai-workspace.');validateSpace(space,await projects());mutate(expected,()=>{db.prepare('INSERT OR REPLACE INTO spaces VALUES (?,?)').run(space.id,JSON.stringify(space));});return space;},
-    remove:async({id,revision:expected}:{id:string;revision:number})=>{if(syncing.has(id))throw new Error('Дождитесь синхронизации ai-workspace.');let removed=false;mutate(expected,()=>{removed=db.prepare('DELETE FROM spaces WHERE id=?').run(id).changes>0;});return {removed};},
+    save:async({space,revision:expected}:{space:Space;revision:number})=>{if(syncing.has(space.id))throw new Error('Дождитесь синхронизации ai-workspace.');validateSpace(space,await projects());const previous=read().find(row=>row.id===space.id);mutate(expected,()=>{db.prepare('INSERT OR REPLACE INTO spaces VALUES (?,?)').run(space.id,JSON.stringify(space));});for(const hostId of new Set([...(previous?.agentsHosts??[]),...(space.agentsHosts??[])]))refreshAgents(hostId);return space;},
+    remove:async({id,revision:expected}:{id:string;revision:number})=>{if(syncing.has(id))throw new Error('Дождитесь синхронизации ai-workspace.');const previous=read().find(row=>row.id===id);let removed=false;mutate(expected,()=>{removed=db.prepare('DELETE FROM spaces WHERE id=?').run(id).changes>0;});for(const hostId of previous?.agentsHosts??[])refreshAgents(hostId);return {removed};},
     context:async({id,projectId,hostId}:{id:string;projectId:string;hostId:string})=>{const space=read().find(s=>s.id===id);if(!space)throw new Error('Пространство не найдено.');const catalog=await projects();validateSpace(space,catalog);return contextForSpace(space,catalog,projectId,hostId);},
     thread_bindings:async({threadIds}:{threadIds:string[]})=>{
       if(!threadIds.length)return {bindings:[]};
@@ -92,6 +132,7 @@ export default async function plugin(bb:BbPluginApi){
     },
   };
   bb.rpc.register(rpcContract,handlers,{experimental_discoverable:true,experimental_description:'Project Spaces: related projects, folders and shared context. Removing a space preserves all projects, files and chats.'});
+  for(const hostId of new Set(read().flatMap(space=>space.agentsHosts??[])))refreshAgents(hostId);
   const readTools=new Set(['workspace_context','workspace_read','workspace_search','workspace_search_fulltext','workspace_service_graph','workspace_events','workspace_event_details','list_groups','list_projects','project_tree','project_grep','project_context','codegraph_context','codegraph_search','codegraph_node','codegraph_status','codegraph_callers','codegraph_callees']);
   const bounded=(value:unknown)=>{const text=JSON.stringify(value);return text.length<=30000?text:JSON.stringify({truncated:true,preview:text.slice(0,27000),hint:'Запросите один repo и более узкий scope/targets. Для list_tools передайте tool.'});};
   bb.agents.registerTool({
@@ -102,13 +143,13 @@ export default async function plugin(bb:BbPluginApi){
       const thread=await bb.sdk.threads.get({threadId:ctx.threadId});if(!thread.environmentId)throw new Error('У треда нет рабочей среды.');
       const environment=await bb.sdk.environments.get({environmentId:thread.environmentId});
       const workspace=await repowiseInput(space.id,environment.hostId,ctx.projectId,environment.path);
-      if(input.operation==='prepare')return bounded({started:startRepowise(workspace,environment.hostId),hint:'Проверяйте operation=context до prepared=true и busy=false.'});
+      if(input.operation==='prepare')return bounded({started:startRepowise(workspace,environment.hostId),hint:'Проверяйте operation=context до prepared=true, busy=false, stale=false. Если busy=true, подготовка уже идёт; повторно prepare не вызывайте. Если busy=false и error задана, сообщите об ошибке и проверьте исходники.'});
       if(input.operation==='context')return bounded(await repowiseState(workspace,environment.hostId));
       return {content:[{type:'text' as const,text:bounded(await host.call('repowise_query',{workspace,query:{operation:input.operation,repo:input.repo,tool:input.tool,arguments:input.arguments}},{hostId:environment.hostId,signal:ctx.signal,timeoutMs:180000}))}]};
     },
   });
   bb.agents.registerTool({
-    name:'project_spaces_workspace',description:'Read ai-workspace context in this Project Space group on the thread host. Start with operation=context, then list_tools for exact tool schemas, then call. The configured global MCP may use a different group.',
+    name:'project_spaces_workspace',description:'Read ai-workspace context in this Project Space group on the thread host. Start with operation=context. list_tools returns a compact catalog; pass tool=<name> for one full schema, then call. The configured global MCP may use a different group.',
     parameters:z.object({operation:z.enum(['context','list_tools','call']),spaceId:z.string().uuid().optional(),tool:z.string().max(80).optional(),arguments:z.record(z.string(),z.unknown()).optional()}),
     async execute(input,ctx){
       const metadata=await bb.sdk.threads.getPluginMetadata({threadId:ctx.threadId});
@@ -117,8 +158,9 @@ export default async function plugin(bb:BbPluginApi){
       const environment=await bb.sdk.environments.get({environmentId:thread.environmentId});if(!environment.path)throw new Error('Рабочая папка недоступна.');
       const tool=input.operation==='context'?'workspace_context':input.tool;
       if(input.operation==='call'&&(!tool||!readTools.has(tool)))throw new Error('Выберите инструмент чтения из list_tools.');
+      if(input.operation==='list_tools'&&tool&&!readTools.has(tool))throw new Error('Выберите инструмент чтения из list_tools.');
       const result=await host.call('mcp',{group:space.contextGroup,cwd:environment.path,method:input.operation==='list_tools'?'tools/list':'tools/call',...(tool?{tool}:{}),arguments:input.arguments??{}},{hostId:environment.hostId,signal:ctx.signal,timeoutMs:60000});
-      if(input.operation==='list_tools'){const value=result as {tools:{name:string}[]};return JSON.stringify({tools:value.tools.filter(t=>readTools.has(t.name))});}
+      if(input.operation==='list_tools')return bounded(discoverReadTools(result,readTools,tool));
       return {content:[{type:'text' as const,text:bounded(result)}],isError:(result as {isError?:boolean})?.isError===true};
     },
   });
@@ -130,13 +172,13 @@ export default async function plugin(bb:BbPluginApi){
       return {tools:['project_spaces_workspace','project_spaces_repowise'],skills:['project-spaces'],instructions:`This project belongs to multiple Project Spaces. Do not choose implicitly. Ask which space to use, then pass its spaceId to both tools: ${JSON.stringify(candidates.map(s=>({spaceId:s.id,name:s.name})))}`};
     }
     const current=space;
-    const map=typeof ctx.pluginMetadata.workspaceMap==='string'?ctx.pluginMetadata.workspaceMap.slice(0,18000):'';
+    const map=typeof ctx.pluginMetadata.workspaceMap==='string'?workspaceMapOnly(ctx.pluginMetadata.workspaceMap).slice(0,18000):'';
     return {tools:[...(current.contextGroup?['project_spaces_workspace']:[]),'project_spaces_repowise'],skills:['project-spaces'],instructions:[
       'Project Spaces: this thread uses the workspace configuration snapshot saved at creation or its latest transfer. Listed paths do not grant filesystem permissions.',map,
       ctx.pluginMetadata.threadScope==='space'?'This is a shared workspace thread. Coordinate the task across the selected projects.':'This is a project thread. Focus changes on the selected project while considering the shared workspace context.',
       space.instructions,
-      `For code investigation use project_spaces_repowise: context lists the exact aliases and prepared state for all space folders on this host, with the actual active checkout substituted. If not prepared or evidence reports stale_warning, call prepare and poll context until ready. Then list_tools (use tool to fetch one schema) and call. repo=all searches across the space or fans out by repo when native all is unsupported. Keep repo/path/line/commit evidence separate. Never use an index from another checkout or silently replace unavailable paths.`,
-      current?.contextGroup?`Call project_spaces_workspace with operation=context for current group ${JSON.stringify(current.contextGroup)} before broad scans. Use operation=list_tools for available schemas, then operation=call. This bridge uses this thread's host and the actual configured group; a global MCP can have another scope. Report unavailable scope explicitly.`:'',
+      agentContextInstructions(current),
+      'repo=all searches across the space or fans out by repo when native all is unsupported. Honor upstream stale_warning, degraded and completeness fields. Never silently replace unavailable paths.',
       'Use BB thread storage for artifacts and temporary files. Do not export history or create .bb/chats. Read each directory\'s applicable AGENTS.md. Clean task-owned temporary build dependencies after validation; preserve requested results.',
     ].filter(Boolean).join('\n\n')};
   });

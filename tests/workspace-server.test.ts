@@ -10,7 +10,7 @@ test('agent integration binds the current space group to the actual environment 
     projects:{list:async()=>[{id:'p',name:'Project',gitRemoteUrl:null,sources:[{type:'local_path',hostId:'source-host',path:'D:\\source'}]}]},
     threads:{getPluginMetadata:async()=>({spaceSnapshot:space}),get:async()=>({environmentId:'env'})},
     environments:{get:async()=>({path:'/worktrees/feature',hostId:'actual-host'})},
-  },experimental_callHostRpc:async call=>call.method==='mcp'?{tools:[{name:'workspace_context'},{name:'project_file_write'}]}:{installedVersion:'1.5.0',binary:'ai-workspace',managed:false,latestVersion:'1.7.0',releaseUrl:'https://github.com/lee-to/ai-workspace/releases/tag/v1.7.0',checkedAt:1,updateAvailable:true,supported:true,error:null}});
+  },experimental_callHostRpc:async call=>call.method==='mcp'?{tools:[{name:'workspace_context',inputSchema:{type:'object',properties:{detail:{type:'boolean'}}}},{name:'workspace_search',inputSchema:{type:'object'}},{name:'project_file_write'}]}:{installedVersion:'1.5.0',binary:'ai-workspace',managed:false,latestVersion:'1.7.0',releaseUrl:'https://github.com/lee-to/ai-workspace/releases/tag/v1.7.0',checkedAt:1,updateAvailable:true,supported:true,error:null}});
   try {
     await plugin(bb);await harness.behavior.callRpc('save',{space,revision:0});
     await harness.behavior.callRpc('workspace_software',{hostId:'other-host',checkLatest:true});
@@ -24,6 +24,9 @@ test('agent integration binds the current space group to the actual environment 
     const call=harness.inspection.experimental_hostRpcCalls.at(-1)!;
     assert.equal(call.hostId,'actual-host');assert.deepEqual(call.input,{group:'group-b',cwd:'/worktrees/feature',method:'tools/list',arguments:{}});
     assert.match(JSON.stringify(result),/workspace_context/);assert.doesNotMatch(JSON.stringify(result),/project_file_write/);
+    assert.doesNotMatch(JSON.stringify(result),/inputSchema/);
+    const one=await harness.behavior.callAgentTool('project_spaces_workspace',{operation:'list_tools',tool:'workspace_context'},{threadId:'thread',projectId:'p'});assert.match(JSON.stringify(one),/inputSchema/);assert.doesNotMatch(JSON.stringify(one),/workspace_search/);
+    const count=harness.inspection.experimental_hostRpcCalls.length;await assert.rejects(()=>harness.behavior.callAgentTool('project_spaces_workspace',{operation:'list_tools',tool:'project_file_write'},{threadId:'thread',projectId:'p'}),/инструмент чтения/);assert.equal(harness.inspection.experimental_hostRpcCalls.length,count);
     await assert.rejects(()=>harness.behavior.callAgentTool('project_spaces_workspace',{operation:'call',tool:'project_file_write',arguments:{}},{threadId:'thread',projectId:'p'}),/инструмент чтения/);
     await assert.rejects(()=>harness.behavior.callRpc('workspace_sync',{id:space.id,hostId:'source-host',revision:0}),/Настройки изменились/);
     await harness.behavior.callRpc('remove',{id:space.id,revision:2});
