@@ -45,6 +45,11 @@ history and include child threads. Copies use native idle forks and share the
 working environment; they do not copy child agents. The saved space snapshot
 can change on a transfer. Restart a session to load its new space instructions.
 
+Rename a project from its `…` menu in the sidebar or space page. This uses
+BB's native project name update (also available as
+`bb project update <project-id> --name <name>`). It changes the display name
+across spaces; folder paths, Git remotes and thread bindings stay the same.
+
 Use the chat's actual environment for the primary project. Never substitute
 the main checkout for a worktree. Other projects remain independent repositories.
 Check AGENTS.md directly at known checkout roots and relevant ancestor directories;
@@ -63,3 +68,9 @@ unavailable projects or scopes instead of pretending context was loaded.
 Keep artifacts and temporary files in BB thread storage. Do not export history
 or create `.bb/chats`. Clean task-owned temporary build dependencies after
 validation; preserve requested results.
+
+For a ChatGPT Page, BB can render a compact card from
+`::page-preview{page_id="<exact returned Page ID>" title="Page title"}` on its own
+line. Use the full opaque `page_` ID returned by Pages without rewriting it.
+The card opens the canonical ChatGPT Page in a new tab; it does not embed or
+fetch private content, and viewing may require the user's ChatGPT sign-in.

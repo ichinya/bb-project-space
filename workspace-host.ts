@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { workspaceCommand,workspaceMcp,mcpJson,type WorkspaceOptions } from './workspace-process.ts';
 import type { z } from 'zod';
-import { workspaceRequest,workspaceStatus } from './workspace-contract.ts';
+import { workspaceRequest,workspaceStatus,workspaceSyncResult } from './workspace-contract.ts';
 import { registeredProject,type Registered } from './workspace-registry.ts';
 
 type Request=z.infer<typeof workspaceRequest>;
@@ -13,6 +13,18 @@ type Member={path:string;group:string;owners:string[];original:boolean};
 type State={members:Member[]};
 const key=(value:string)=>process.platform==='win32'?path.resolve(value.replace(/^\\\\\?\\/,'')).toLowerCase():path.resolve(value);
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
+
+async function directoryAt(location:string):Promise<string|null> {
+  try {
+    const canonical=await fs.realpath(location);
+    if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');
+    return canonical;
+  }catch(error){
+    const code=(error as NodeJS.ErrnoException).code;
+    if(code==='ENOENT'||code==='ENOTDIR')return null;
+    throw error;
+  }
+}
 
 /** Native ai-workspace accepts literal shared paths, never glob patterns. */
 function validateSharedPaths(config:Config|null) {
@@ -67,12 +79,14 @@ export async function synchronizeWorkspace(request:Request,dataDir:string,option
   let state:State={members:[]};try{state=JSON.parse(await fs.readFile(stateFile,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   await fs.mkdir(dataDir,{recursive:true});
   const persist=async()=>{const temp=stateFile+'.tmp';await fs.writeFile(temp,JSON.stringify(state,null,2));await fs.rename(temp,stateFile);};
-  const results:{path:string;ok:boolean;message:string}[]=[];
+  const results:z.infer<typeof workspaceSyncResult>['results']=[];
   const projects=await registered(options);
   const desired=new Set<string>();
   for(const root of request.roots){
     try {
-      const canonical=await fs.realpath(root.path);if(!(await fs.stat(canonical)).isDirectory())throw new Error('Путь не является папкой.');desired.add(key(canonical));
+      const canonical=await directoryAt(root.path);
+      if(!canonical)throw new Error('Папка пространства недоступна на этом устройстве.');
+      desired.add(key(canonical));
       const existing=registeredProject(projects,canonical);
       const before=await configAt(canonical);
       validateSharedPaths(before.config);
@@ -100,9 +114,18 @@ export async function synchronizeWorkspace(request:Request,dataDir:string,option
     try {
       const otherOwners=member.owners.filter(id=>id!==request.spaceId);
       if(!otherOwners.length&&!member.original){
-        const config=await configAt(member.path);
-        if(config.config){await updateGroups(member.path,(config.config.groups??[]).filter(g=>g!==member.group),dataDir);await workspaceCommand(['init'],{...options,cwd:member.path});}
-        else await workspaceCommand(['leave',member.group],{...options,cwd:member.path});
+        const canonical=await directoryAt(member.path);
+        if(!canonical){
+          // Keep ownership so a future sync can reconcile the old config if the folder returns.
+          results.push({path:member.path,ok:false,deferred:true,message:'Папка недоступна. Старая привязка сохранена до следующей синхронизации.'});
+          continue;
+        }
+        if(key(canonical)!==key(member.path))throw new Error('Путь старой папки теперь ведёт в другое место. Привязка сохранена.');
+        const config=await configAt(canonical);
+        if(config.config){
+          await updateGroups(canonical,(config.config.groups??[]).filter(g=>g!==member.group),dataDir);
+          await workspaceCommand(['init'],{...options,cwd:canonical});
+        }else await workspaceCommand(['leave',member.group],{...options,cwd:canonical});
       }
       member.owners=otherOwners;if(!otherOwners.length)state.members=state.members.filter(m=>m!==member);await persist();
       results.push({path:member.path,ok:true,message:'Старая привязка пространства снята. Файлы и регистрация сохранены.'});

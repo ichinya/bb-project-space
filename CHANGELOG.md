@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2
+
+- Add project renaming to the project's actions menu in the sidebar and space
+  page, including projects without threads. Native BB project updates refresh
+  names across spaces without changing folders, Git remotes or thread placement.
+- Show ai-workspace folder counts by device and retry removal of obsolete group
+  bindings when their folders become available again.
+
+## 0.2.1
+
+- Render `::page-preview{page_id="…"}` as a compact, mobile-friendly ChatGPT
+  page link in assistant messages, including existing conversations. Optional
+  `title` supplies the label. Invalid Page IDs remain inactive; the card does
+  not fetch private page content or change the saved message.
+
 ## 0.2.0
 
 - Release the shared-context workflow around ai-workspace for materials/groups

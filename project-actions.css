@@ -1,0 +1,14 @@
+.ps-project-actions-dialog{width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;color:var(--foreground);background:var(--background)}
+.ps-project-actions-dialog form{display:grid;gap:12px;font-size:13px}
+.ps-project-actions-dialog input{box-sizing:border-box;width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--background);color:var(--foreground);font:inherit}
+.ps-project-actions-dialog input:focus-visible{outline:2px solid var(--ring,var(--foreground));outline-offset:2px}
+.ps-project-actions-dialog [role=alert]{color:var(--destructive-text,var(--destructive));white-space:pre-wrap}
+.ps-project-action-list{display:grid;gap:6px}
+.ps-project-action-list button,.ps-project-action-buttons button{padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--secondary-foreground);font:inherit;cursor:pointer}
+.ps-project-action-list button{display:flex;align-items:center;gap:9px;text-align:left}
+.ps-project-action-list button:hover{background:var(--state-hover,var(--accent))}
+.ps-project-action-list [data-icon-root],.ps-project-actions-trigger [data-icon-root]{width:16px;height:16px;flex-shrink:0}
+.ps-project-action-buttons{display:flex;justify-content:flex-end;gap:8px}
+.ps-project-action-buttons button:disabled{opacity:.5;cursor:default}
+.ps-project-card-heading{display:flex;align-items:center;gap:10px}
+.ps-project-card-heading>.ps-project-actions-trigger{margin-left:auto;padding:5px;line-height:0}

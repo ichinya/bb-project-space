@@ -72,6 +72,27 @@ test('real CLI initializes, merges configs, scopes MCP, preserves other groups a
     assert.ok(failed.results.some(r=>!r.ok));assert.ok(JSON.parse(await fs.readFile(path.join(b,'.ai-workspace.json'),'utf8')).groups.includes('space-group'));
     const changed=await synchronizeWorkspace({...reduced,group:'new-group'},data,options);assert.ok(changed.results.every(r=>r.ok));
     const status=await inspectWorkspace({...reduced,group:'new-group'},options);assert.ok(status.folders[0]!.groups.includes('new-group'));
+
+    // An obsolete folder can be absent on the host while its ownership is still tracked.
+    const retired=path.join(root,'retired');
+    const ledger=path.join(data,'workspace-memberships.json');
+    const oldMember={path:retired,group:'new-group',owners:[id],original:false};
+    const tracked=JSON.parse(await fs.readFile(ledger,'utf8'));
+    await fs.writeFile(ledger,JSON.stringify({members:[...tracked.members,oldMember]}));
+    const currentRequest={...reduced,group:'new-group'};
+    const deferred=await synchronizeWorkspace(currentRequest,data,options);
+    assert.equal(deferred.status.folders.length,1);
+    assert.ok(deferred.status.folders[0]!.configGroups.includes('new-group'));
+    assert.deepEqual(deferred.results.filter(row=>!row.ok).map(({path,deferred})=>({path,deferred})),[{path:retired,deferred:true}]);
+    assert.ok(JSON.parse(await fs.readFile(ledger,'utf8')).members.some((member:{path:string})=>member.path===retired));
+
+    await fs.mkdir(retired);
+    await workspaceCommand(['init','--group=new-group'],{...options,cwd:retired});
+    await workspaceCommand(['export'],{...options,cwd:retired});
+    const reconciled=await synchronizeWorkspace(currentRequest,data,options);
+    assert.ok(reconciled.results.some(row=>row.path===retired&&row.ok&&!row.deferred));
+    assert.ok(!JSON.parse(await fs.readFile(path.join(retired,'.ai-workspace.json'),'utf8')).groups.includes('new-group'));
+    assert.ok(!JSON.parse(await fs.readFile(ledger,'utf8')).members.some((member:{path:string})=>member.path===retired));
     assert.equal(await fs.readFile(path.join(a,'README.md'),'utf8'),'# Alpha\nShared context.');
   // The native isolated owner exits five seconds after its last request; Windows
   // keeps its cwd locked until then. Retry cleanup without touching other owners.

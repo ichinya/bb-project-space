@@ -1,0 +1,13 @@
+.ps-page-preview{display:flex;align-items:center;gap:12px;box-sizing:border-box;width:100%;max-width:640px;margin:12px 0;padding:14px 16px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:12px;color:inherit;text-decoration:none!important;background:color-mix(in srgb,currentColor 4%,transparent);line-height:1.4}
+a.ps-page-preview:hover{background:color-mix(in srgb,currentColor 8%,transparent);border-color:color-mix(in srgb,currentColor 40%,transparent)}
+a.ps-page-preview:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.ps-page-preview-icon{display:flex;flex-shrink:0;padding:10px;border-radius:9px;background:color-mix(in srgb,currentColor 7%,transparent)}
+.ps-page-preview-icon svg{width:22px;height:22px}
+.ps-page-preview-body{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px;overflow-wrap:anywhere}
+.ps-page-preview-body strong{font-weight:600}
+.ps-page-preview-body>span,.ps-page-preview-unavailable span{font-size:.85em;opacity:.7}
+.ps-page-preview-open{display:flex;align-items:center;gap:4px;flex-shrink:0;font-size:.85em}
+.ps-page-preview-open svg{width:16px;height:16px}
+.ps-page-preview-unavailable>div{display:flex;flex-direction:column}
+.ps-page-preview-unavailable>svg{width:22px;height:22px;flex-shrink:0}
+@media(max-width:440px){.ps-page-preview{padding:12px;gap:10px;flex-wrap:wrap}.ps-page-preview-open{margin-left:auto}.ps-page-preview-icon{padding:8px}}

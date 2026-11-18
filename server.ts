@@ -5,7 +5,7 @@ import { spaceSchema, validateSpace, contextForSpace, type Space } from './model
 import { readThreadBinding } from './threads.ts';
 import { githubRepositoryUrl } from './github.ts';
 import { gitRepository } from './repository.ts';
-import { workspaceHostContract,workspaceStatus,workspaceSoftware } from './workspace-contract.ts';
+import { workspaceHostContract,workspaceStatus,workspaceSoftware,workspaceSyncResult } from './workspace-contract.ts';
 import { workspaceRoots } from './workspace-model.ts';
 import { folderProjectInput,makeFolderProjectAdder } from './folder-project.ts';
 import { transferInput,transferResult,makeThreadTransfer } from './thread-transfer.ts';
@@ -29,8 +29,8 @@ export const rpcContract=defineRpcContract({
   workspace_software:{input:z.object({hostId:z.string().min(1),checkLatest:z.boolean()}),output:workspaceSoftware},
   workspace_install:{input:z.object({hostId:z.string().min(1)}),output:workspaceSoftware},
   workspace_status:{input:z.object({id:z.string().uuid(),hostId:z.string().min(1)}),output:workspaceStatus},
-  workspace_sync:{input:z.object({id:z.string().uuid(),hostId:z.string().min(1),revision:z.number().int()}),output:z.object({status:workspaceStatus,results:z.array(z.object({path:z.string(),ok:z.boolean(),message:z.string()}))})},
-  catalog:{input:z.null(),output:z.object({spaces:z.array(spaceSchema),projects:z.array(projectSchema),hosts:z.array(z.object({id:z.string(),name:z.string()})),revision:z.number().int()})},
+  workspace_sync:{input:z.object({id:z.string().uuid(),hostId:z.string().min(1),revision:z.number().int()}),output:workspaceSyncResult},
+  catalog:{input:z.null(),output:z.object({spaces:z.array(spaceSchema),projects:z.array(projectSchema),hosts:z.array(z.object({id:z.string(),name:z.string()})),revision:z.number().int(),workspaceFolderCounts:z.record(z.string(),z.record(z.string(),z.number().int().nonnegative()))})},
   save:{input:z.object({space:spaceSchema,revision:z.number().int()}),output:spaceSchema},
   remove:{input:z.object({id:z.string(),revision:z.number().int()}),output:z.object({removed:z.boolean()})},
   context:{input:z.object({id:z.string(),projectId:z.string(),hostId:z.string()}),output:z.object({instructions:z.string(),paths:z.array(z.string())})},
@@ -121,7 +121,15 @@ export default async function plugin(bb:BbPluginApi){
       if(syncing.has(id))throw new Error('Синхронизация пространства уже выполняется.');syncing.add(id);
       try {const result=await host.call('synchronize',await workspaceInput(id,hostId,true),{hostId,timeoutMs:300000});bb.realtime.publish('workspace-changed',{id,hostId});return result;}finally{syncing.delete(id);}
     },
-    catalog:async()=>({spaces:read(),projects:await projects(),hosts:(await bb.sdk.hosts.list()).map(h=>({id:h.id,name:h.name})),revision:revision()}),
+    catalog:async()=>{
+      const [projectList,hostList]=await Promise.all([projects(),bb.sdk.hosts.list()]);
+      const spaces=read();
+      const hosts=hostList.map(({id,name})=>({id,name}));
+      const workspaceFolderCounts=Object.fromEntries(spaces.map(space=>[
+        space.id,Object.fromEntries(hosts.map(host=>[host.id,workspaceRoots(space,projectList,host.id).length])),
+      ]));
+      return {spaces,projects:projectList,hosts,revision:revision(),workspaceFolderCounts};
+    },
     save:async({space,revision:expected}:{space:Space;revision:number})=>{if(syncing.has(space.id))throw new Error('Дождитесь синхронизации ai-workspace.');validateSpace(space,await projects());const previous=read().find(row=>row.id===space.id);mutate(expected,()=>{db.prepare('INSERT OR REPLACE INTO spaces VALUES (?,?)').run(space.id,JSON.stringify(space));});for(const hostId of new Set([...(previous?.agentsHosts??[]),...(space.agentsHosts??[])]))refreshAgents(hostId);return space;},
     remove:async({id,revision:expected}:{id:string;revision:number})=>{if(syncing.has(id))throw new Error('Дождитесь синхронизации ai-workspace.');const previous=read().find(row=>row.id===id);let removed=false;mutate(expected,()=>{removed=db.prepare('DELETE FROM spaces WHERE id=?').run(id).changes>0;});for(const hostId of previous?.agentsHosts??[])refreshAgents(hostId);return {removed};},
     context:async({id,projectId,hostId}:{id:string;projectId:string;hostId:string})=>{const space=read().find(s=>s.id===id);if(!space)throw new Error('Пространство не найдено.');const catalog=await projects();validateSpace(space,catalog);return contextForSpace(space,catalog,projectId,hostId);},
