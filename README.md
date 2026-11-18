@@ -158,8 +158,13 @@ bb project-spaces repowise-status <space-id> <host-id> --json
 bb project-spaces repowise-query <space-id> <host-id> get_overview --json
 ```
 
-Preparation runs in the background. Poll status until `busy=false` and
-`prepared=true`; failures remain visible. Agent calls `prepare` and `context`
+Preparation runs in the background. Poll status until `busy=false`,
+`prepared=true` and `stale=false`. A failed refresh keeps readable indexes
+and reports the last successful update, failed stage and elapsed time. The
+overview remains available with a freshness warning while the index is stale.
+The next eligible agent turn retries an unsuccessful refresh after a cooldown.
+Project Spaces ignores uncommitted changes to the root `.ai-workspace.json`
+in its freshness check. Agent calls `prepare` and `context`
 use the thread's actual environment, including a selected worktree. Inspect
 upstream staleness/confidence diagnostics and update indexes before relying on
 changed code. Neither index scope nor path maps grant filesystem permissions.

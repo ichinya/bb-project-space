@@ -26,3 +26,21 @@ test('Git worktree fingerprints use their own checkout and plain folders remain 
   await fs.mkdir(plain);await fs.writeFile(path.join(plain,'helper.py'),'one');const initial=await checkoutFingerprint(plain);assert.ok(initial);await fs.mkdir(path.join(plain,'.repowise'));await fs.writeFile(path.join(plain,'.repowise','state.json'),'{}');assert.equal(await checkoutFingerprint(plain),initial);await fs.writeFile(path.join(plain,'helper.py'),'two');assert.notEqual(await checkoutFingerprint(plain),initial);
   assert.equal(await checkoutFingerprint(path.join(root,'missing')),null);
 }));
+
+test('only the root ai-workspace config is excluded from checkout freshness',async()=>fixture(async root=>{
+  const config=path.join(root,'.ai-workspace.json');
+  await fs.writeFile(path.join(root,'code.ts'),'one');
+  const plain=await checkoutFingerprint(root);
+  await fs.writeFile(config,'{}');
+  assert.equal(await checkoutFingerprint(root),plain);
+  git(root,'init','--quiet');
+  git(root,'add','.');
+  git(root,'-c','user.name=QA','-c','user.email=qa@example.invalid','commit','--quiet','-m','fixture');
+  const clean=await checkoutFingerprint(root);
+  await fs.writeFile(config,'{"groups":["new"]}');
+  git(root,'add','.ai-workspace.json');
+  assert.equal(await checkoutFingerprint(root),clean);
+  await fs.mkdir(path.join(root,'src'));
+  await fs.writeFile(path.join(root,'src','.ai-workspace.json'),'{}');
+  assert.notEqual(await checkoutFingerprint(root),clean);
+}));

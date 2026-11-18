@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 export type ProcessOptions={cwd:string;binary?:string;signal?:AbortSignal;timeoutMs?:number;env?:NodeJS.ProcessEnv;safePaths?:string[]};
+type CommandOptions=ProcessOptions&{requireSuccess?:boolean;onOutput?:(text:string)=>void};
 export function repowiseEnvironment(options:ProcessOptions):NodeJS.ProcessEnv{
   const value:NodeJS.ProcessEnv={...process.env,...options.env,REPOWISE_SKIP_EDITOR_SETUP:'1',PYTHONIOENCODING:'utf-8',NO_COLOR:'1'};
   let count=Number(value.GIT_CONFIG_COUNT??0);if(!Number.isInteger(count)||count<0||count>100)throw new Error('Неверный GIT_CONFIG_COUNT.');
@@ -9,14 +10,17 @@ export function repowiseEnvironment(options:ProcessOptions):NodeJS.ProcessEnv{
   if(options.safePaths?.length)value.GIT_CONFIG_COUNT=String(count);
   return value;
 }
-export function repowiseCommand(args:string[],options:ProcessOptions):Promise<string>{
+export function repowiseCommand(args:string[],options:CommandOptions):Promise<string>{
   return new Promise((resolve,reject)=>{
     const child=spawn(options.binary??'repowise',args,{cwd:options.cwd,env:repowiseEnvironment(options),shell:false,windowsHide:true,signal:options.signal});
     let output='',errors='',done=false;
     const finish=(error?:Error)=>{if(done)return;done=true;clearTimeout(timer);child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();error?reject(error):resolve(output);};
-    const timer=setTimeout(()=>{child.kill();finish(new Error('Repowise: превышено время ожидания.'));},options.timeoutMs??180000);
-    child.stdout.on('data',chunk=>{output=(output+chunk).slice(-1024*1024);});child.stderr.on('data',chunk=>{errors=(errors+chunk).slice(-8000);});
-    const exited=(code:number|null)=>finish(code===0||code===2?undefined:new Error(errors.trim()||output.slice(-2000)||`Repowise завершился (${code})`));
+    const timeout=options.timeoutMs??180000;
+    const timer=setTimeout(()=>{child.kill();finish(new Error(`Repowise: превышен лимит ${Math.round(timeout/1000)} с.`));},timeout);
+    child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+    child.stdout.on('data',chunk=>{output=(output+chunk).slice(-1024*1024);options.onOutput?.(chunk);});
+    child.stderr.on('data',chunk=>{errors=(errors+chunk).slice(-8000);options.onOutput?.(chunk);});
+    const exited=(code:number|null)=>finish(code===0||(!options.requireSuccess&&code===2)?undefined:new Error(errors.trim()||output.slice(-2000)||`Repowise завершился (${code})`));
     child.on('error',finish);child.on('exit',exited);child.on('close',exited);
   });
 }

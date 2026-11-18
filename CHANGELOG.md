@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3
+
+- Refresh existing Git indexes in one Repowise workspace pass. Ignore the
+  root `.ai-workspace.json` when checking for uncommitted source changes.
+- Keep readable indexes and the last successful update after a timeout. Show
+  the failed stage, elapsed time and last reported progress. Automatic refresh
+  retries after a cooldown on a subsequent agent turn.
+
 ## 0.2.2
 
 - Add project renaming to the project's actions menu in the sidebar and space

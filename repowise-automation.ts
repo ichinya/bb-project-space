@@ -14,7 +14,12 @@ export function makeRepowiseAutomation(deps:{resolve:(thread:Thread)=>Promise<Co
       try{
         const context=await deps.resolve(thread);if(disposed||!context?.enabled)return;
         const key=context.hostId+'|'+JSON.stringify(context.workspace);if(checking.has(key))return checking.get(key);
-        const check=(async()=>{const status=await deps.inspect(context.workspace,context.hostId);if(!disposed&&status.available&&status.prepared&&status.stale&&!status.busy)deps.start(context.workspace,context.hostId);})();
+        const check=(async()=>{
+          const status=await deps.inspect(context.workspace,context.hostId);
+          if(!disposed&&status.available&&status.prepared&&status.stale&&!status.busy&&(!status.retryAt||status.retryAt<=Date.now())){
+            deps.start(context.workspace,context.hostId);
+          }
+        })();
         checking.set(key,check);try{await check;}finally{checking.delete(key);}
       }catch(cause){if(!disposed)deps.onError(cause);}
     },

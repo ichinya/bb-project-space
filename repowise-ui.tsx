@@ -36,8 +36,12 @@ export function RepowiseSettings({id,hosts,revision,dirty,autoRefresh,onAutoRefr
     {software?.checkedAt&&<p className="ps-muted">Проверено: {new Date(software.checkedAt).toLocaleString()}{software.releaseUrl&&<> · <a href={software.releaseUrl} target="_blank" rel="noopener noreferrer">Релиз на PyPI</a></>}</p>}
     {(error||status?.error)&&<SettingsError message={error||status?.error||''}/>}
     <label className="ps-check"><input type="checkbox" checked={autoRefresh} onChange={event=>onAutoRefresh(event.target.checked)}/><span>Автообновлять подготовленные индексы в BB<small>Проверка при начале и завершении хода агента. Обновление только при изменениях, без вызовов модели. Новые папки автоматически не инициализируются.</small></span></label>
-    {status?.stale&&<p role="status" className="ps-save-required">После индексации изменились файлы или коммит. Перед запросами к коду обновите индексы.</p>}
-    {status?.freshnessWarning&&<p role="status" className="ps-muted">{status.freshnessWarning}</p>}
+    {status?.freshnessWarning&&<p role="status" className={status.stale?'ps-save-required':'ps-muted'}>{status.freshnessWarning}</p>}
+    {status?.stage&&(status.busy||status.error)&&<p role="status" className="ps-muted">
+      {status.stage.name}{status.stage.alias?` · ${status.stage.alias}`:''}{status.stage.elapsedMs!==undefined?` · ${Math.round(status.stage.elapsedMs/1000)} с`:''}
+      {status.stage.progress?` · ${status.stage.progress}`:''}
+    </p>}
+    {status?.updatedAt&&<p className="ps-muted">Последнее успешное обновление {new Date(status.updatedAt).toLocaleString()}</p>}
     {dirty&&<p className="ps-save-required" role="status"><strong>Сначала сохраните настройки пространства.</strong> Подготовка использует сохранённый список папок. Установить сам Repowise можно до сохранения.</p>}
     <div className="ps-actions"><button type="button" disabled={!hostId||!!busy||loading} onClick={refresh}>{loading?'Проверка…':'Проверить индексы'}</button><button type="button" disabled={!!busy||loading||dirty||!status?.available} onClick={()=>void prepare()}>{status?.busy||starting?'Индексация…':status?.prepared?'Обновить индексы':'Подготовить все папки'}</button></div>
     {!!status?.roots.length&&<SettingsSection title="Папки и индексы" summary={`${ready} из ${status.roots.length} проиндексировано`} className="ps-settings-nested"><div className="ps-workspace-folders ps-settings-list">{status.roots.map(root=><section key={root.alias}><strong>{root.name}</strong><code>{root.path}</code><small>{!root.exists?'Папка недоступна':root.message}</small><small>Репозиторий: {root.alias}</small></section>)}</div></SettingsSection>}

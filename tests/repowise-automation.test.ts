@@ -15,3 +15,11 @@ test('disabled, unresolved, disposed and failed lifecycle checks never start ind
   let release!:(value:typeof status)=>void,started=0;const auto=makeRepowiseAutomation({resolve:async()=>({hostId:'actual',workspace,enabled:true}),inspect:()=>new Promise(resolve=>{release=resolve;}),start:()=>{started++;return true;},onError:error=>{throw error;}});const pending=auto.notify(thread);await new Promise(resolve=>setImmediate(resolve));auto.dispose();release(status);await pending;assert.equal(started,0);
   const errors:unknown[]=[];const failed=makeRepowiseAutomation({resolve:async()=>{throw new Error('Host offline');},inspect:async()=>status,start:()=>false,onError:error=>errors.push(error)});await failed.notify(thread);assert.equal(errors.length,1);failed.dispose();
 });
+
+test('a failed refresh can retry after its cooldown',async()=>{
+  let started=0,retryAt=Date.now()+60_000;
+  const auto=makeRepowiseAutomation({resolve:async()=>({hostId:'actual',workspace,enabled:true}),inspect:async()=>({...status,error:'timeout',retryAt}),start:()=>{started++;return true;},onError:error=>{throw error;}});
+  await auto.notify(thread);assert.equal(started,0);
+  retryAt=Date.now()-1;
+  await auto.notify(thread);assert.equal(started,1);
+});

@@ -16,7 +16,9 @@ Start Repowise with `operation=context` for aliases and index readiness. Call
 `prepared=true,busy=false,stale=false`.
 `busy=true` means preparation is already running: do not trigger it again.
 Poll at reasonable intervals and work from source on independent checks. If idle
-with an error, report it instead of looping preparation attempts.
+with an error, report its stage and use the saved overview when `prepared=true`.
+Treat results marked `stale` as navigation hints and verify them against source.
+Automatic retries wait until `retryAt` and run at the next eligible agent turn.
 `list_tools` returns only a compact catalog. Request one full schema with
 `operation=list_tools, tool=<name>` and then `call`; avoid bulk schema dumps.
 `repo=all` federates supported operations and fans other tools out separately,

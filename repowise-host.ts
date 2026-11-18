@@ -2,10 +2,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash,randomUUID } from 'node:crypto';
 import type { z } from 'zod';
-import { repowiseRequest,repowiseStatus,repowiseQuery,repowiseReadTools } from './repowise-contract.ts';
+import { repowiseRequest,repowiseStatus,repowiseQuery,repowiseReadTools,repowiseStage } from './repowise-contract.ts';
 import { repowiseCommand,repowiseMcp,type ProcessOptions } from './repowise-process.ts';
 import { folderIdentity } from './folder-project.ts';
-import { checkoutFingerprints } from './repowise-freshness.ts';
+import { checkoutFingerprints,checkoutSnapshots,workspaceConfig } from './repowise-freshness.ts';
 import { discoverReadTools } from './tool-discovery.ts';
 
 type Request=z.infer<typeof repowiseRequest>;
@@ -13,7 +13,6 @@ type Status=z.infer<typeof repowiseStatus>;
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 const jobs=new Map<string,Promise<void>>();
-const indexes=new Map<string,Promise<void>>();
 let writeQueue:Promise<unknown>=Promise.resolve();
 function serialize<T>(run:()=>Promise<T>){const next=writeQueue.then(run);writeQueue=next.catch(()=>{});return next;}
 const versions=new Map<string,{until:number;value:Promise<string>}>();
@@ -25,51 +24,155 @@ export function repowiseLayout(raw:Request,dataDir:string){
 }
 async function exists(file:string){try{return (await fs.stat(file)).isDirectory()||Boolean((await fs.stat(file)).isFile());}catch{return false;}}
 async function atomic(file:string,value:unknown){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+randomUUID();try{await fs.writeFile(temp,JSON.stringify(value,null,2)+'\n',{flag:'wx'});await fs.rename(temp,file);}finally{await fs.rm(temp,{force:true});}}
-async function stateAt(directory:string):Promise<{updatedAt?:number;roots?:Record<string,string>;fingerprints?:Record<string,string|null>;error?:string}>{try{return JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'));}catch{return {};}}
-export async function inspectRepowise(request:Request,dataDir:string,options:ProcessOptions):Promise<Status>{
-  const {directory,roots}=repowiseLayout(request,dataDir),state=await stateAt(directory);let version:string|null=null,error:string|null=null;
-  try{const key=options.binary??'repowise';let cached=versions.get(key);if(!cached||cached.until<Date.now()){cached={until:Date.now()+30000,value:repowiseCommand(['--version'],{...options,timeoutMs:10000}).then(text=>text.trim())};versions.set(key,cached);}version=await cached.value;}catch(cause){if((cause as NodeJS.ErrnoException).code!=='ENOENT')error=message(cause);}
-  const rows=await Promise.all(roots.map(async root=>({...root,exists:await exists(root.path),indexed:await exists(path.join(root.path,'.repowise','wiki.db'))&&await exists(path.join(root.path,'.repowise','state.json')),message:state.roots?.[root.alias]??'Не подготовлен'})));
-  const previousError=!version&&/spawn.*ENOENT/.test(state.error??'')?null:state.error;
-  const prepared=!!state.updatedAt&&rows.every(r=>r.indexed),current=prepared?await checkoutFingerprints(roots,options):{};
-  const stale=prepared&&roots.some(root=>current[root.alias]!==null&&current[root.alias]!==state.fingerprints?.[root.alias]);
-  const uncertain=prepared&&roots.some(root=>current[root.alias]===null);
-  return {available:!!version,version,workspacePath:directory,prepared,stale,freshnessWarning:uncertain?'Не удалось полностью проверить изменения. Актуальность этих индексов не подтверждена.':null,busy:jobs.has(directory),error:error??previousError??null,updatedAt:state.updatedAt??null,roots:rows};
+type Stage=z.infer<typeof repowiseStage>;
+type State={updatedAt?:number;roots?:Record<string,string>;fingerprints?:Record<string,string|null>;error?:string;stage?:Stage;failedAt?:number};
+const activeStages=new Map<string,Stage>();
+const retryDelayMs=5*60_000;
+const manifestName='.repowise-workspace.yaml';
+
+async function stateAt(directory:string):Promise<State>{
+  try{return JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'))??{};}catch{return {};}
 }
+async function repoIndexed(root:string):Promise<boolean>{
+  const base=path.join(root,'.repowise');
+  return await exists(path.join(base,'wiki.db'))&&await exists(path.join(base,'state.json'));
+}
+async function hasIndexedWorkingTree(root:string):Promise<boolean>{
+  const state:State&{working_tree_paths?:unknown}=await stateAt(path.join(root,'.repowise'));
+  return Array.isArray(state.working_tree_paths)&&state.working_tree_paths.some(file=>typeof file==='string'&&file!==workspaceConfig);
+}
+
+export async function inspectRepowise(request:Request,dataDir:string,options:ProcessOptions):Promise<Status>{
+  const {directory,roots}=repowiseLayout(request,dataDir),state=await stateAt(directory);
+  let version:string|null=null,versionError:string|null=null;
+  try{
+    const key=options.binary??'repowise';let cached=versions.get(key);
+    if(!cached||cached.until<Date.now()){
+      cached={until:Date.now()+30000,value:repowiseCommand(['--version'],{...options,timeoutMs:10000}).then(text=>text.trim())};versions.set(key,cached);
+    }
+    version=await cached.value;
+  }catch(cause){if((cause as NodeJS.ErrnoException).code!=='ENOENT')versionError=message(cause);}
+  const busy=jobs.has(directory);
+  const rows=await Promise.all(roots.map(async root=>{
+    const available=await exists(root.path),indexed=available&&await repoIndexed(root.path);
+    return {...root,exists:available,indexed,message:state.roots?.[root.alias]??(indexed?'Индекс найден':'Не подготовлен')};
+  }));
+  // Older releases cleared updatedAt on failure. Recover the readable on-disk
+  // indexes conservatively and keep them stale until a new sync completes.
+  const prepared=rows.every(root=>root.indexed)&&await exists(path.join(directory,manifestName));
+  const stage=activeStages.get(directory)??state.stage??null;
+  const interrupted=!!stage&&stage.elapsedMs===undefined&&!busy;
+  const previousError=state.error??(interrupted?`Обновление прервано на этапе «${stage.name}».`:null);
+  const error=versionError??(!version&&/spawn.*ENOENT/.test(previousError??'')?null:previousError);
+  const current=prepared&&!busy?await checkoutFingerprints(roots,options):{};
+  const stale=prepared&&(busy||!!previousError||!state.updatedAt||roots.some(root=>current[root.alias]!==null&&current[root.alias]!==state.fingerprints?.[root.alias]));
+  const uncertain=prepared&&!busy&&roots.some(root=>current[root.alias]===null);
+  const freshnessWarning=stale
+    ? 'Доступен сохранённый индекс. Его данные могут быть устаревшими. Сверяйте выводы с исходниками.'
+    : uncertain?'Не удалось полностью проверить изменения. Актуальность этих индексов не подтверждена.':null;
+  return {available:!!version,version,workspacePath:directory,prepared,stale,freshnessWarning,busy,error,stage,
+    retryAt:state.failedAt===undefined?null:state.failedAt+retryDelayMs,updatedAt:state.updatedAt??null,roots:rows};
+}
+
 export async function synchronizeRepowise(request:Request,dataDir:string,options:ProcessOptions):Promise<Status>{
-  const layout=repowiseLayout(request,dataDir),{directory,roots}=layout;const running=jobs.get(directory);if(running){await running;return inspectRepowise(request,dataDir,options);}
-  const operation=(async()=>{
-    const state:{updatedAt?:number;roots:Record<string,string>;fingerprints?:Record<string,string|null>;error?:string}={roots:{}};
-    await atomic(path.join(directory,'.repowise-workspace.yaml'),layout.manifest);await atomic(path.join(directory,'state.json'),state);
+  const {directory,roots,manifest}=repowiseLayout(request,dataDir);
+  const running=jobs.get(directory);
+  if(running){await running;return inspectRepowise(request,dataDir,options);}
+  const operation=serialize(async()=>{
+    options.signal?.throwIfAborted();
+    const state=await stateAt(directory),stateFile=path.join(directory,'state.json');
+    const save=()=>atomic(stateFile,state);
+    async function runStage<T>(name:string,run:(stage:Stage)=>Promise<T>,alias?:string):Promise<T>{
+      options.signal?.throwIfAborted();
+      const stage:Stage={name,...(alias?{alias}:{}),startedAt:Date.now()};
+      state.stage=stage;activeStages.set(directory,stage);await save();
+      try{return await run(stage);}
+      finally{stage.elapsedMs=Date.now()-stage.startedAt;await save();}
+    }
     try{
-      const before=await checkoutFingerprints(roots,options);
-      const sizes=await Promise.all(roots.map(async root=>({root,size:await fs.stat(path.join(root.path,'.repowise','wiki.db')).then(s=>s.size).catch(()=>0)})));
+      const pending=!!state.error||!!state.failedAt||!state.updatedAt||!!(state.stage&&state.stage.elapsedMs===undefined);
+      const before=await runStage('Проверка изменений',()=>checkoutSnapshots(roots,options));
+      const indexes=await Promise.all(roots.map(root=>repoIndexed(root.path)));
+      const hasManifest=await exists(path.join(directory,manifestName));
+      if(!pending&&hasManifest&&indexes.every(Boolean)&&roots.every(root=>{
+        const current=before[root.alias]?.fingerprint;
+        return !!current&&current===state.fingerprints?.[root.alias];
+      }))return;
+
+      await atomic(path.join(directory,manifestName),manifest);
+      state.roots={...state.roots};
       const failures:string[]=[];
-      // Bootstrap small/new members first; a large primary index must not starve its siblings.
-      for(const {root} of sizes.sort((a,b)=>a.size-b.size)){
-        try{
-        if(!await exists(root.path))throw new Error(`Папка недоступна: ${root.path}`);
-        state.roots[root.alias]='Ожидает очереди';await atomic(path.join(directory,'state.json'),state);
-        const identity=folderIdentity(root.path);let task=indexes.get(identity);
-        if(!task){task=serialize(async()=>{
-          state.roots[root.alias]='Индексация…';await atomic(path.join(directory,'state.json'),state);
-          const rootOptions={...options,cwd:root.path,timeoutMs:900000,safePaths:[root.path]};
-          const initialized=await exists(path.join(root.path,'.repowise','wiki.db'))&&await exists(path.join(root.path,'.repowise','state.json'));
-          const initialize=()=>repowiseCommand(['init',root.path,'--mode','fast','--yes','--no-prose','--no-save-key','--no-editor-setup','--no-hook','--no-workspace','--exclude','.bb/'],rootOptions);
-          if(initialized){try{await repowiseCommand(['update',root.path,'--no-workspace','--index-only','--working-tree'],rootOptions);}catch(cause){if(/No previous sync found|not initialized|not indexed/i.test(message(cause)))await initialize();else throw cause;}}
-          else await initialize();
-          if(!await exists(path.join(root.path,'.repowise','wiki.db')))throw new Error('Repowise не создал индекс.');
-        });indexes.set(identity,task);void task.finally(()=>{indexes.delete(identity);}).catch(()=>{});}
-        await task;state.roots[root.alias]='Индекс готов';await atomic(path.join(directory,'state.json'),state);
-        }catch(cause){const failure=message(cause);state.roots[root.alias]='Ошибка: '+failure;failures.push(root.name+': '+failure);await atomic(path.join(directory,'state.json'),state);}
+      for(const [index,root] of roots.entries()){
+        if(!await exists(root.path)){
+          state.roots[root.alias]='Папка недоступна';failures.push(`${root.name}: папка недоступна`);
+          continue;
+        }
+        const current=before[root.alias];
+        const plainChanged=current?.kind==='folder'&&(!indexes[index]||!current.fingerprint||current.fingerprint!==state.fingerprints?.[root.alias]);
+        // The workspace scanner can skip a now-clean Git tree even when the
+        // last index contained local edits. The single-repo updater reconciles
+        // its persisted working_tree_paths in that specific case.
+        const reverted=current?.kind==='git'&&current.dirty===false&&indexes[index]&&
+          (pending||current.fingerprint!==state.fingerprints?.[root.alias])&&await hasIndexedWorkingTree(root.path);
+        const bootstrap=!indexes[index];
+        if(!bootstrap&&!plainChanged&&!reverted)continue;
+        const rootOptions={...options,cwd:root.path,timeoutMs:options.timeoutMs??900000,safePaths:[root.path],requireSuccess:true};
+        state.roots[root.alias]='Индексация…';
+        const stageName=bootstrap?'Первичная индексация':plainChanged?'Индексация папки':'Восстановление индекса после отмены правок';
+        await runStage(stageName,async()=>{
+          if(bootstrap||plainChanged){
+            await repowiseCommand(['init',root.path,'--mode','fast','--yes','--no-prose','--no-save-key','--no-editor-setup','--no-hook','--no-workspace','--exclude','.bb/','--exclude',workspaceConfig],rootOptions);
+          }else{
+            await repowiseCommand(['update',root.path,'--no-workspace','--index-only','--working-tree','--no-agents'],rootOptions);
+          }
+        },root.alias);
+        state.roots[root.alias]='Индекс готов';
       }
       if(failures.length)throw new Error(failures.join('\n'));
-      // The managed workspace references external folders; it never scans their common parent.
-      await serialize(()=>repowiseCommand(['workspace','update','--index-only','--working-tree'],{...options,cwd:directory,timeoutMs:900000,safePaths:roots.map(r=>r.path)}));
-      state.updatedAt=Date.now();state.fingerprints=before;await atomic(path.join(directory,'state.json'),state);
-    }catch(cause){state.error=message(cause);await atomic(path.join(directory,'state.json'),state);throw cause;}
-  })();jobs.set(directory,operation);
-  try{await operation;}finally{jobs.delete(directory);}
+
+      // Repowise performs the Git updates and cross-repository analysis in one
+      // workspace run. A prior single-repo update would make dirty Git trees run twice.
+      await runStage('Обновление пространства Repowise',async stage=>{
+        const failed=new Set<string>();
+        const known=new Set(roots.map(root=>root.alias));
+        let buffer='';
+        const progress=(chunk:string)=>{
+          buffer=(buffer+chunk).slice(-8000);
+          const lines=buffer.split(/\r?\n/);buffer=lines.pop()??'';
+          for(const raw of lines){
+            // Strip terminal formatting before looking for the native phase/repo rows.
+            const line=raw.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').trim();
+            const issue=/^[✗↻]\s+([a-z0-9-]+):/.exec(line);
+            if(issue&&known.has(issue[1]!))failed.add(issue[1]!);
+            if(/^(?:Updating |Running cross-repo analysis|Workspace settings changed|[✓✗↻]\s)/.test(line))stage.progress=line.slice(0,240);
+          }
+        };
+        // New indexes already describe the files on disk. Repowise's
+        // workspace-level check needs the working tree only for existing members.
+        const workingTree=roots.some((root,index)=>indexes[index]&&(before[root.alias]?.kind==='unknown'||before[root.alias]?.dirty));
+        await repowiseCommand(['workspace','update','--index-only','--no-agents',...(workingTree?['--working-tree']:[])],{
+          ...options,cwd:directory,timeoutMs:options.timeoutMs??900000,safePaths:roots.map(root=>root.path),requireSuccess:true,onOutput:progress,
+        });
+        progress('\n');
+        if(failed.size)throw new Error(`Repowise не завершил обновление: ${[...failed].join(', ')}.`);
+        const indexed=await Promise.all(roots.map(root=>repoIndexed(root.path)));
+        const missing=roots.filter((_,index)=>!indexed[index]);
+        if(missing.length)throw new Error(`Repowise не создал индекс: ${missing.map(root=>root.name).join(', ')}.`);
+      });
+      state.updatedAt=Date.now();
+      state.fingerprints=Object.fromEntries(roots.map(root=>[root.alias,before[root.alias]?.fingerprint??null]));
+      state.roots=Object.fromEntries(roots.map(root=>[root.alias,'Индекс готов']));
+      delete state.error;delete state.failedAt;
+      await save();
+    }catch(cause){
+      const stage=state.stage;
+      const prefix=stage?`Этап «${stage.name}»${stage.alias?` (${stage.alias})`:''}, ${Math.round((stage.elapsedMs??0)/1000)} с. `:'';
+      state.error=(prefix+message(cause)).slice(0,3000);state.failedAt=Date.now();await save();
+      throw new Error(state.error,{cause});
+    }
+  });
+  jobs.set(directory,operation);
+  try{await operation;}finally{jobs.delete(directory);activeStages.delete(directory);}
   return inspectRepowise(request,dataDir,options);
 }
 
@@ -98,9 +201,9 @@ export async function queryRepowise(request:Request,query:z.infer<typeof repowis
   const layout=repowiseLayout(request,dataDir),status=await inspectRepowise(request,dataDir,options);if(query.operation==='context')return status;
   guardRepowisePaths(query.arguments,query.repo==='all'?layout.roots:layout.roots.filter(r=>r.alias===query.repo));
   if(!status.prepared)throw new Error('Индексы этого пространства/checkout не подготовлены. Вызовите operation=prepare, затем context для проверки готовности.');
-  if(status.stale)throw new Error('После индексации изменились файлы или коммит. Вызовите operation=prepare и дождитесь busy=false, prepared=true, stale=false.');
+  if(status.stale&&!status.error&&query.operation==='call'&&query.tool!=='get_overview')throw new Error('После индексации изменились файлы или коммит. Вызовите operation=prepare и дождитесь busy=false, prepared=true, stale=false.');
   const calls=repowiseCalls(query,layout.roots.map(r=>r.alias));
   const results=await repowiseMcp(layout.directory,calls,{...options,safePaths:layout.roots.map(r=>r.path)});
   if(query.operation==='list_tools')return discoverReadTools(results[0],new Set(repowiseReadTools),query.tool);
-  return {scope:layout.roots,freshnessWarning:status.freshnessWarning??null,results:results.map((result,index)=>({repo:(calls[index]!.params as {arguments:{repo:string}}).arguments.repo,...unpack(result) as object}))};
+  return {scope:layout.roots,stale:!!status.stale,updatedAt:status.updatedAt,freshnessWarning:status.freshnessWarning??null,results:results.map((result,index)=>({repo:(calls[index]!.params as {arguments:{repo:string}}).arguments.repo,...unpack(result) as object}))};
 }
