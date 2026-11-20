@@ -40,3 +40,25 @@
 @media(max-width:760px){.ps-settings-content{padding:0 12px 12px}.ps-settings-section>summary{padding:12px}.ps-settings-toolbar{top:0}.ps-settings-toolbar>.ps-save-actions{width:100%}.ps-settings-list{max-height:280px}}
 .ps-project-card>.ps-composer{padding:14px;border:1px solid var(--border);margin:12px 0 16px}
 @media(max-width:760px){.ps-project-card>.ps-composer{padding:10px}}
+
+.ps-browser-complete {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.875em;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ps-browser-complete > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}

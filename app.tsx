@@ -13,6 +13,7 @@ import { RepowiseSettings } from './repowise-ui.tsx';
 import { SettingsSection } from './settings-section.tsx';
 import { AgentSettings } from './agent-settings.tsx';
 import { PagePreview } from './page-preview-ui.tsx';
+import { BrowserComplete } from './browser-complete-ui.tsx';
 import { ProjectActions } from './project-actions-ui.tsx';
 type Catalog={spaces:Space[];projects:Project[];hosts:{id:string;name:string}[];revision:number;workspaceFolderCounts:Record<string,Record<string,number>>};
 const empty=(projectId:string):Space=>({id:crypto.randomUUID(),name:'',projectIds:projectId?[projectId]:[],primaryProjectId:projectId,folders:[],instructions:'',contextGroup:''});
@@ -91,4 +92,10 @@ function SpacesPage({subPath}:PluginNavPanelProps){
   </>:<div className="ps-welcome"><h2>Одно пространство для связанной работы</h2><p>Объедините проекты, выберите основной и добавьте общие инструкции. Один проект может входить в несколько пространств.</p><p className="ps-muted">Настройки хранятся в BB. Папки .bb/chats и копии истории не создаются.</p></div>}
   </main></div>}</div>;
 }
-export default definePluginApp(app=>{app.slots.messageDirective({id:'page-preview',component:PagePreview});registerThreadTransferActions(app);app.slots.navPanel({id:'spaces',title:'Project Spaces',icon:'Folder',path:'spaces',component:SpacesPage});app.slots.experimental_threadList({id:'spaces',title:'Project Spaces',description:'Пространства → общие треды и проекты → треды проектов',component:SpaceThreadSidebar});});
+export default definePluginApp(app=>{
+  app.slots.messageDirective({id:'page-preview',component:PagePreview});
+  app.slots.messageDirective({id:'browser-complete',component:BrowserComplete});
+  registerThreadTransferActions(app);
+  app.slots.navPanel({id:'spaces',title:'Project Spaces',icon:'Folder',path:'spaces',component:SpacesPage});
+  app.slots.experimental_threadList({id:'spaces',title:'Project Spaces',description:'Пространства → общие треды и проекты → треды проектов',component:SpaceThreadSidebar});
+});
